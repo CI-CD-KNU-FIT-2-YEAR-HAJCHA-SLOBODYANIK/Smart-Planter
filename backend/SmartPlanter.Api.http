@@ -1,0 +1,6 @@
+@SmartPlanter.Api_HostAddress = http://localhost:5168
+
+GET {{SmartPlanter.Api_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###

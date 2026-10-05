@@ -1,0 +1,5 @@
+<Solution>
+  <Folder Name="/backend/">
+    <Project Path="backend/SmartPlanter.Api.csproj" />
+  </Folder>
+</Solution>

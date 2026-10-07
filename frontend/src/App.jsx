@@ -7,6 +7,7 @@ import { Header } from "./components/layout/Header";
 import { PlantCard } from "./components/plants/PlantCard";
 import { MetricsGrid } from "./components/telemetry/MetricsGrid";
 import { HistoryTable } from "./components/telemetry/HistoryTable";
+import { TelemetryChart } from "./components/telemetry/TelemetryChart";
 import { AlertsList } from "./components/alerts/AlertsList";
 import { AddPlantModal } from "./components/plants/AddPlantModal";
 
@@ -132,6 +133,7 @@ export default function App() {
             Поточний стан: <b>{selectedPlant.name}</b>
           </h3>
           <MetricsGrid latestTelemetry={latestMetric} plant={selectedPlant} />
+          <TelemetryChart history={history} />
           <HistoryTable history={history} />
         </section>
       )}

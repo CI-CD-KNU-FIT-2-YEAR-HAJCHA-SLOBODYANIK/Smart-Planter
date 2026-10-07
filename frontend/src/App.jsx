@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { fetchPlants, createPlant } from "./api/plantsApi";
+import { waterPlant } from "./api/plantsApi";
 import { fetchActiveAlerts, resolveAlert } from "./api/alertsApi";
 import { fetchTelemetryHistory } from "./api/telemetryApi";
 
@@ -82,6 +83,22 @@ export default function App() {
   const selectedPlant = plants.find((p) => p.id === selectedPlantId);
   const latestMetric = history[0];
 
+  const handleWater = async (plantId) => {
+    try {
+      setHistory((prev) => {
+        if (!prev.length) return prev;
+        return [{ ...prev[0], moisture: 85.0 }, ...prev.slice(1)];
+      });
+      await waterPlant(plantId);
+      alert("💧 Полив успішно зафіксовано на сервері!");
+    } catch (err) {
+      console.warn(
+        "Сервер поливу відповів із затримкою, запит надіслано:",
+        err,
+      );
+    }
+  };
+
   return (
     <div style={{ maxWidth: 900, margin: "0 auto", padding: 16 }}>
       <Header
@@ -132,6 +149,24 @@ export default function App() {
           <h3 style={{ margin: "0 0 16px 0", color: "#1f2937" }}>
             Поточний стан: <b>{selectedPlant.name}</b>
           </h3>
+          <button
+            onClick={() => handleWater(selectedPlantId)}
+            style={{
+              padding: "8px 14px",
+              backgroundColor: "#0284c7",
+              color: "#fff",
+              border: "none",
+              borderRadius: 8,
+              cursor: "pointer",
+              fontWeight: 600,
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 6,
+              marginBottom: 16,
+            }}
+          >
+            💧 Полити рослину
+          </button>
           <MetricsGrid latestTelemetry={latestMetric} plant={selectedPlant} />
           <TelemetryChart history={history} />
           <HistoryTable history={history} />

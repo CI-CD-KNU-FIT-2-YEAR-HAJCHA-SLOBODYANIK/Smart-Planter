@@ -27,6 +27,36 @@ export function AddPlantModal({ isOpen, onClose, onCreate }) {
     });
   };
 
+  const PRESETS = {
+    monstera: {
+      name: "Монстера",
+      species: "Monstera Deliciosa",
+      minMoisture: 40,
+      maxMoisture: 70,
+      minTemp: 18,
+      maxTemp: 28,
+      minLight: 400,
+    },
+    succulent: {
+      name: "Ехеверія",
+      species: "Сукулент",
+      minMoisture: 15,
+      maxMoisture: 40,
+      minTemp: 15,
+      maxTemp: 30,
+      minLight: 800,
+    },
+    ficus: {
+      name: "Фікус Бенджаміна",
+      species: "Ficus",
+      minMoisture: 30,
+      maxMoisture: 60,
+      minTemp: 18,
+      maxTemp: 26,
+      minLight: 500,
+    },
+  };
+
   return (
     <div style={styles.overlay}>
       <div style={styles.modal}>
@@ -35,6 +65,37 @@ export function AddPlantModal({ isOpen, onClose, onCreate }) {
           <button onClick={onClose} style={styles.closeBtn}>
             <X size={20} />
           </button>
+        </div>
+        <div style={{ marginBottom: 14 }}>
+          <label
+            style={{
+              fontSize: 12,
+              color: "#6b7280",
+              display: "block",
+              marginBottom: 4,
+            }}
+          >
+            Швидкий шаблон:
+          </label>
+          <div style={{ display: "flex", gap: 6 }}>
+            {Object.entries(PRESETS).map(([key, p]) => (
+              <button
+                key={key}
+                type="button"
+                onClick={() => setFormData({ ...p })}
+                style={{
+                  padding: "4px 8px",
+                  fontSize: 12,
+                  borderRadius: 6,
+                  border: "1px solid #d1d5db",
+                  background: "#f9fafb",
+                  cursor: "pointer",
+                }}
+              >
+                {p.name}
+              </button>
+            ))}
+          </div>
         </div>
         <form onSubmit={handleSubmit} style={styles.form}>
           <input

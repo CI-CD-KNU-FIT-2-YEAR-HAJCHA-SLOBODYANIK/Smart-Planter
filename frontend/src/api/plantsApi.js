@@ -15,3 +15,14 @@ export async function createPlant(plantData) {
   if (!response.ok) throw new Error("Не вдалося створити рослину");
   return response.json();
 }
+
+export async function waterPlant(plantId) {
+  const response = await fetch(`${BASE_URL}/api/v1/plants/${plantId}/water`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+  });
+  if (!response.ok) {
+    throw new Error(`Помилка поливу: ${response.status}`);
+  }
+  return response.json().catch(() => ({ success: true }));
+}

@@ -11,12 +11,16 @@ import { HistoryTable } from "./components/telemetry/HistoryTable";
 import { TelemetryChart } from "./components/telemetry/TelemetryChart";
 import { AlertsList } from "./components/alerts/AlertsList";
 import { AddPlantModal } from "./components/plants/AddPlantModal";
+import { OfflineBanner } from "./components/layout/OfflineBanner";
 
 export default function App() {
   const [plants, setPlants] = useState([]);
   const [alerts, setAlerts] = useState([]);
   const [selectedPlantId, setSelectedPlantId] = useState(null);
-  const [history, setHistory] = useState([]);
+  const [history, setHistory] = useState(() => {
+    const cached = localStorage.getItem("cached_history");
+    return cached ? JSON.parse(cached) : [];
+  });
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [loading, setLoading] = useState(true);
 
@@ -27,6 +31,7 @@ export default function App() {
         fetchActiveAlerts(),
       ]);
       setPlants(plantsData);
+      localStorage.setItem("cached_plants", JSON.stringify(plantsData));
       setAlerts(alertsData);
 
       if (plantsData.length > 0 && !selectedPlantId) {
@@ -44,6 +49,7 @@ export default function App() {
     try {
       const data = await fetchTelemetryHistory(plantId, 10);
       setHistory(data);
+      localStorage.setItem("cached_history", JSON.stringify(data));
     } catch (err) {
       console.error("Помилка завантаження телеметрії:", err);
     }
@@ -101,6 +107,8 @@ export default function App() {
 
   return (
     <div style={{ maxWidth: 900, margin: "0 auto", padding: 16 }}>
+      <OfflineBanner />
+
       <Header
         onRefresh={loadBaseData}
         onOpenCreateModal={() => setIsModalOpen(true)}

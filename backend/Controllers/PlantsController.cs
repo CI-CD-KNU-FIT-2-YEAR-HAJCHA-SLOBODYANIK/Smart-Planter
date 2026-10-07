@@ -73,4 +73,30 @@ public class PlantsController : ControllerBase
 
         return CreatedAtAction(nameof(GetAll), new { id = plant.Id }, response);
     }
+
+    // POST /api/v1/plants/{id}/water
+    [HttpPost("{id:int}/water")]
+    public async Task<IActionResult> WaterPlant(int id)
+    {
+        var plant = await _context.Plants.FindAsync(id);
+        if (plant == null)
+        {
+            return NotFound($"Рослину з ID {id} не знайдено.");
+        }
+
+        // Закрываем активные алерты о засухе для этого растения
+        var lowMoistureAlerts = await _context.Alerts
+            .Where(a => a.PlantId == id && a.Type == AlertType.LowMoisture && !a.IsResolved)
+            .ToListAsync();
+
+        foreach (var alert in lowMoistureAlerts)
+        {
+            alert.IsResolved = true;
+            alert.ResolvedAt = DateTime.UtcNow;
+        }
+
+        await _context.SaveChangesAsync();
+
+        return Ok(new { message = $"Полив для рослини '{plant.Name}' зафіксовано." });
+    }
 }

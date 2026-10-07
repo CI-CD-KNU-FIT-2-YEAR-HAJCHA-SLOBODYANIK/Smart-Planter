@@ -1,4 +1,8 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
+import { fetchPlants, createPlant } from "./api/plantsApi";
+import { fetchActiveAlerts, resolveAlert } from "./api/alertsApi";
+import { fetchTelemetryHistory } from "./api/telemetryApi";
+
 import { Header } from "./components/layout/Header";
 import { PlantCard } from "./components/plants/PlantCard";
 import { MetricsGrid } from "./components/telemetry/MetricsGrid";
@@ -7,86 +11,130 @@ import { AlertsList } from "./components/alerts/AlertsList";
 import { AddPlantModal } from "./components/plants/AddPlantModal";
 
 export default function App() {
+  const [plants, setPlants] = useState([]);
+  const [alerts, setAlerts] = useState([]);
+  const [selectedPlantId, setSelectedPlantId] = useState(null);
+  const [history, setHistory] = useState([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [mockAlerts, setMockAlerts] = useState([
-    {
-      id: 1,
-      plantId: 1,
-      plantName: "Фікус Бенджаміна",
-      message: "Низька вологість: 25.0% (мінімум: 30.0%)",
-      createdAt: new Date().toISOString(),
-    },
-  ]);
+  const [loading, setLoading] = useState(true);
 
-  const mockPlant = {
-    id: 1,
-    name: "Фікус Бенджаміна",
-    species: "Ficus",
-    minMoisture: 30,
-    maxMoisture: 60,
-    minTemp: 18,
-    maxTemp: 26,
-    minLight: 400,
+  const loadBaseData = async () => {
+    try {
+      const [plantsData, alertsData] = await Promise.all([
+        fetchPlants(),
+        fetchActiveAlerts(),
+      ]);
+      setPlants(plantsData);
+      setAlerts(alertsData);
+
+      if (plantsData.length > 0 && !selectedPlantId) {
+        setSelectedPlantId(plantsData[0].id);
+      }
+    } catch (err) {
+      console.error("Помилка синхронізації з бекендом:", err);
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const mockTelemetry = {
-    moisture: 45.2,
-    temperature: 22.4,
-    light: 520,
+  const loadTelemetry = async (plantId) => {
+    if (!plantId) return;
+    try {
+      const data = await fetchTelemetryHistory(plantId, 10);
+      setHistory(data);
+    } catch (err) {
+      console.error("Помилка завантаження телеметрії:", err);
+    }
   };
 
-  const mockHistory = [
-    {
-      id: 1,
-      timestamp: new Date().toISOString(),
-      moisture: 45.2,
-      temperature: 22.4,
-      light: 520,
-    },
-    {
-      id: 2,
-      timestamp: new Date(Date.now() - 60000).toISOString(),
-      moisture: 44.8,
-      temperature: 22.1,
-      light: 510,
-    },
-  ];
+  useEffect(() => {
+    loadBaseData();
+    const interval = setInterval(loadBaseData, 5000);
+    return () => clearInterval(interval);
+  }, []);
 
-  const handleResolve = (id) => {
-    alert(`Інцидент #${id} закрито!`);
-    setMockAlerts((prev) => prev.filter((a) => a.id !== id));
+  useEffect(() => {
+    if (selectedPlantId) {
+      loadTelemetry(selectedPlantId);
+    }
+  }, [selectedPlantId]);
+
+  const handleResolve = async (id) => {
+    try {
+      await resolveAlert(id);
+      setAlerts((prev) => prev.filter((a) => a.id !== id));
+    } catch (err) {
+      alert(`Не вдалося закрити інцидент: ${err.message}`);
+    }
   };
 
-  const handleCreate = (data) => {
-    alert(`Рослину додано: ${data.name} (вид: ${data.species})`);
-    console.log("Дані нової рослини:", data);
-    setIsModalOpen(false);
+  const handleCreate = async (payload) => {
+    try {
+      await createPlant(payload);
+      setIsModalOpen(false);
+      await loadBaseData();
+    } catch (err) {
+      alert(`Помилка створення рослини: ${err.message}`);
+    }
   };
+
+  const selectedPlant = plants.find((p) => p.id === selectedPlantId);
+  const latestMetric = history[0];
 
   return (
     <div style={{ maxWidth: 900, margin: "0 auto", padding: 16 }}>
       <Header
-        onRefresh={() => alert("Оновлення даних...")}
+        onRefresh={loadBaseData}
         onOpenCreateModal={() => setIsModalOpen(true)}
       />
 
-      <AlertsList alerts={mockAlerts} onResolve={handleResolve} />
+      <AlertsList alerts={alerts} onResolve={handleResolve} />
 
-      <div style={{ marginBottom: 20 }}>
-        <PlantCard plant={mockPlant} isSelected={true} onSelect={() => {}} />
-      </div>
+      <h2 style={{ fontSize: 18, color: "#374151", marginBottom: 12 }}>
+        Ваші рослини
+      </h2>
+      {plants.length === 0 && !loading && (
+        <p style={{ color: "#6b7280", marginBottom: 20 }}>
+          У базі ще немає доданих рослин. Натисніть «Додати рослину», щоб
+          створити першу.
+        </p>
+      )}
 
-      <section
+      <div
         style={{
-          background: "#fff",
-          border: "1px solid #e5e7eb",
-          borderRadius: 12,
-          padding: 16,
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))",
+          gap: 12,
+          marginBottom: 24,
         }}
       >
-        <MetricsGrid latestTelemetry={mockTelemetry} plant={mockPlant} />
-        <HistoryTable history={mockHistory} />
-      </section>
+        {plants.map((plant) => (
+          <PlantCard
+            key={plant.id}
+            plant={plant}
+            isSelected={selectedPlantId === plant.id}
+            onSelect={setSelectedPlantId}
+          />
+        ))}
+      </div>
+
+      {selectedPlant && (
+        <section
+          style={{
+            background: "#fff",
+            border: "1px solid #e5e7eb",
+            borderRadius: 12,
+            padding: 16,
+            boxShadow: "0 1px 3px rgba(0,0,0,0.05)",
+          }}
+        >
+          <h3 style={{ margin: "0 0 16px 0", color: "#1f2937" }}>
+            Поточний стан: <b>{selectedPlant.name}</b>
+          </h3>
+          <MetricsGrid latestTelemetry={latestMetric} plant={selectedPlant} />
+          <HistoryTable history={history} />
+        </section>
+      )}
 
       <AddPlantModal
         isOpen={isModalOpen}

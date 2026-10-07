@@ -6,6 +6,7 @@ var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddControllers();
 builder.Services.AddOpenApi();
+builder.Services.AddSignalR();
 
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
 builder.Services.AddDbContext<AppDbContext>(options =>
@@ -15,9 +16,10 @@ builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowAll", policy =>
     {
-        policy.AllowAnyOrigin()
+        policy.SetIsOriginAllowed(_ => true)
               .AllowAnyMethod()
-              .AllowAnyHeader();
+              .AllowAnyHeader()
+              .AllowCredentials(); // новое для SignalR
     });
 });
 
@@ -34,6 +36,8 @@ app.MapScalarApiReference();
 
 app.UseCors("AllowAll");
 app.UseAuthorization();
+
 app.MapControllers();
+app.MapHub<SmartPlanter.Api.Hubs.TelemetryHub>("/hubs/telemetry");  // точка входа вебсокет
 
 app.Run(); // Заходить на http://localhost:5000/scalar/v1

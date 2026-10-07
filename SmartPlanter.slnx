@@ -2,4 +2,7 @@
   <Folder Name="/backend/">
     <Project Path="backend/SmartPlanter.Api.csproj" />
   </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/SmartPlanter.Tests/SmartPlanter.Tests.csproj" />
+  </Folder>
 </Solution>

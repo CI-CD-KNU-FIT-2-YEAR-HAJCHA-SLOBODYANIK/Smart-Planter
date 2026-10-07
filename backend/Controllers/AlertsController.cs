@@ -16,7 +16,7 @@ public class AlertsController : ControllerBase
         _context = context;
     }
 
-    // Получение списка всех активных инцидентов
+    // Отримання списку всіх активних інцидентів
     [HttpGet("active")]
     public async Task<ActionResult<IEnumerable<AlertResponseDto>>> GetActiveAlerts()
     {
@@ -39,19 +39,19 @@ public class AlertsController : ControllerBase
         return Ok(alerts);
     }
 
-    // Закрытие инцидента по его ID
+    // Закриття інциденту за його ID
     [HttpPut("{id:int}/resolve")]
     public async Task<IActionResult> ResolveAlert(int id)
     {
         var alert = await _context.Alerts.FindAsync(id);
         if (alert == null)
         {
-            return NotFound($"Инцидент с ID {id} не найден.");
+            return NotFound($"Інцидент з ID {id} не знайдено.");
         }
 
         if (alert.IsResolved)
         {
-            return BadRequest("Инцидент уже был закрыт ранее.");
+            return BadRequest("Інцидент вже був закритий раніше.");
         }
 
         alert.IsResolved = true;

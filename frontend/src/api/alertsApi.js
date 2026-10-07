@@ -1,4 +1,4 @@
-const BASE_URL = "http://localhost:5000/api/v1/alerts";
+const BASE_URL = "http://localhost:8000/api/v1/alerts";
 
 export async function fetchActiveAlerts() {
   const response = await fetch(`${BASE_URL}/active`);

@@ -1,4 +1,4 @@
-const BASE_URL = "http://localhost:5000/api/v1/telemetry";
+const BASE_URL = "http://localhost:8000/api/v1/telemetry";
 
 export async function fetchTelemetryHistory(plantId, limit = 20) {
   const response = await fetch(`${BASE_URL}/${plantId}/history?limit=${limit}`);

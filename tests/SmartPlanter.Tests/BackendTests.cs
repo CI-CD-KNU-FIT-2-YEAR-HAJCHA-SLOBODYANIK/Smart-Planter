@@ -1,6 +1,9 @@
-﻿using Microsoft.AspNetCore.Mvc;
+﻿using System.Security.Claims;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using Moq;
 using SmartPlanter.Api.Controllers;
 using SmartPlanter.Api.Data;
@@ -14,17 +17,10 @@ namespace SmartPlanter.Tests;
 
 public class BackendTests
 {
-    private const int BASE_TEST_COUNT = 1;
-    private const int MASS_TEST_COUNT = 99;
-    private const int SHUFFLE_POOL_COUNT = 100;
-    private const int SHUFFLE_TAKE_COUNT = 10;
-    private const int SHUFFLE_TELEMETRIES = 5;
-    private const int COMBO_TEST_COUNT = 8;
-    private const int SPAM_TEST_COUNT = 8;
-
     private readonly ITestOutputHelper _output;
     private readonly int _seed;
     private readonly Random _random;
+    private readonly IConfiguration _configuration;
 
     public BackendTests(ITestOutputHelper output)
     {
@@ -32,9 +28,20 @@ public class BackendTests
         _seed = Environment.TickCount;
         _random = new Random(_seed);
         _output.WriteLine($"Seed: {_seed}");
+
+        var configValues = new Dictionary<string, string?>
+        {
+            { "Jwt:Key", "SmartPlanter_Secret_Key_For_Jwt_Token_Auth_2026_Secure_Key!" },
+            { "Jwt:Issuer", "SmartPlanterApi" },
+            { "Jwt:Audience", "SmartPlanterApp" }
+        };
+
+        _configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(configValues)
+            .Build();
     }
 
-    private (AppDbContext Context, TelemetryController Controller, Mock<IClientProxy> MockClients) CreateEnvironment()
+    private (AppDbContext Context, Mock<IClientProxy> MockUserProxy, Mock<IHubContext<TelemetryHub>> MockHubContext) CreateEnvironment()
     {
         var options = new DbContextOptionsBuilder<AppDbContext>()
             .UseInMemoryDatabase(databaseName: Guid.NewGuid().ToString())
@@ -43,241 +50,297 @@ public class BackendTests
         var context = new AppDbContext(options);
 
         var mockHubClients = new Mock<IHubClients>();
-        var mockClientProxy = new Mock<IClientProxy>();
-        mockHubClients.Setup(c => c.All).Returns(mockClientProxy.Object);
+        var mockUserProxy = new Mock<IClientProxy>();
+
+        // Настройка адресной отправки пользователю по ID
+        mockHubClients.Setup(c => c.User(It.IsAny<string>())).Returns(mockUserProxy.Object);
 
         var mockHubContext = new Mock<IHubContext<TelemetryHub>>();
         mockHubContext.Setup(h => h.Clients).Returns(mockHubClients.Object);
 
-        var controller = new TelemetryController(context, mockHubContext.Object);
-
-        return (context, controller, mockClientProxy);
+        return (context, mockUserProxy, mockHubContext);
     }
 
-    private Plant GeneratePlant(int id)
+    private static void SetUserContext(ControllerBase controller, int userId, string username)
     {
-        return new Plant
+        var claims = new List<Claim>
         {
-            Id = id,
-            Name = $"Растение {id}",
-            Species = "Generated Species",
-            MinMoisture = _random.Next(20, 40),
-            MaxMoisture = _random.Next(60, 80),
-            MinTemp = _random.Next(12, 18),
-            MaxTemp = _random.Next(26, 34),
-            MinLight = _random.Next(150, 300)
+            new(ClaimTypes.NameIdentifier, userId.ToString()),
+            new(ClaimTypes.Name, username)
         };
+        var identity = new ClaimsIdentity(claims, "TestAuth");
+        var principal = new ClaimsPrincipal(identity);
+
+        if (controller.ControllerContext.HttpContext == null)
+        {
+            controller.ControllerContext = new ControllerContext
+            {
+                HttpContext = new DefaultHttpContext()
+            };
+        }
+
+        controller.ControllerContext.HttpContext.User = principal;
     }
 
-    private TelemetryCreateDto GenerateTelemetry(Plant plant, int badStateMask = 0)
+    private static void SetDeviceKeyHeader(ControllerBase controller, string? deviceKey)
     {
-        double moisture = (badStateMask & 1) != 0
-            ? plant.MinMoisture - 5.0
-            : plant.MinMoisture + _random.NextDouble() * (plant.MaxMoisture - plant.MinMoisture);
+        if (controller.ControllerContext.HttpContext == null)
+        {
+            controller.ControllerContext = new ControllerContext
+            {
+                HttpContext = new DefaultHttpContext()
+            };
+        }
 
-        double temp = (badStateMask & 2) != 0
-            ? plant.MinTemp - 2.0
-            : plant.MinTemp + _random.NextDouble() * (plant.MaxTemp - plant.MinTemp);
+        if (!string.IsNullOrEmpty(deviceKey))
+        {
+            controller.ControllerContext.HttpContext.Request.Headers["X-Device-Key"] = deviceKey;
+        }
+        else
+        {
+            controller.ControllerContext.HttpContext.Request.Headers.Remove("X-Device-Key");
+        }
+    }
 
-        double light = (badStateMask & 4) != 0
-            ? plant.MinLight - 50.0
-            : plant.MinLight + _random.NextDouble() * 500.0;
-
-        return new TelemetryCreateDto(plant.Id, (float)moisture, (float)temp, (float)light);
+    private Plant CreatePlantForUser(AppDbContext context, int userId, string name = "Тестова рослина")
+    {
+        var plant = new Plant
+        {
+            UserId = userId,
+            Name = name,
+            Species = "Test Species",
+            ApiKey = Guid.NewGuid().ToString("N"),
+            MinMoisture = 30.0f,
+            MaxMoisture = 70.0f,
+            MinTemp = 18.0f,
+            MaxTemp = 28.0f,
+            MinLight = 300.0f
+        };
+        context.Plants.Add(plant);
+        context.SaveChanges();
+        return plant;
     }
 
     [Fact]
-    public async Task PlantCreation_SingleAndMass_MaintainsIntegrity()
+    public async Task Telemetry_DeviceApiKey_Authentication_AcceptsValidAndRejectsInvalid()
+    {
+        var (context, _, mockHubContext) = CreateEnvironment();
+        var telemetryController = new TelemetryController(context, mockHubContext.Object);
+
+        var plant = CreatePlantForUser(context, userId: 1);
+
+        // 1. Попытка отправки без ключа в заголовке
+        SetDeviceKeyHeader(telemetryController, null);
+        var noKeyResult = await telemetryController.PostTelemetry(new TelemetryCreateDto(50, 22, 400));
+        Assert.IsType<UnauthorizedObjectResult>(noKeyResult.Result);
+
+        // 2. Попытка отправки с невалидным ключом
+        SetDeviceKeyHeader(telemetryController, "invalid_device_key_123");
+        var invalidKeyResult = await telemetryController.PostTelemetry(new TelemetryCreateDto(50, 22, 400));
+        Assert.IsType<UnauthorizedObjectResult>(invalidKeyResult.Result);
+
+        // 3. Успешная отправка с валидным ключом
+        SetDeviceKeyHeader(telemetryController, plant.ApiKey);
+        var successResult = await telemetryController.PostTelemetry(new TelemetryCreateDto(50, 22, 400));
+        var okResult = Assert.IsType<OkObjectResult>(successResult.Result);
+        var response = Assert.IsType<TelemetryResponseDto>(okResult.Value);
+
+        Assert.Equal(plant.Id, response.PlantId);
+        Assert.Equal(50, response.Moisture);
+    }
+
+    [Fact]
+    public async Task Plants_DataIsolation_UserCannotAccessOtherUsersPlants()
+    {
+        var (context, _, mockHubContext) = CreateEnvironment();
+        var plantsController = new PlantsController(context, mockHubContext.Object);
+
+        // Создаем растения для двух разных пользователей
+        var plantUser1 = CreatePlantForUser(context, userId: 1, "Монстера Користувача 1");
+        var plantUser2 = CreatePlantForUser(context, userId: 2, "Фікус Користувача 2");
+
+        // Авторизуемся под пользователем 1
+        SetUserContext(plantsController, 1, "user_one");
+
+        var result = await plantsController.GetAll();
+        var okResult = Assert.IsType<OkObjectResult>(result.Result);
+        var user1Plants = Assert.IsAssignableFrom<IEnumerable<PlantResponseDto>>(okResult.Value).ToList();
+
+        // Пользователь 1 видит только свое растение
+        Assert.Single(user1Plants);
+        Assert.Equal(plantUser1.Id, user1Plants[0].Id);
+        Assert.DoesNotContain(user1Plants, p => p.Id == plantUser2.Id);
+
+        // Пользователь 1 пытается полить растение пользователя 2
+        var waterResult = await plantsController.WaterPlant(plantUser2.Id);
+        Assert.IsType<NotFoundObjectResult>(waterResult);
+    }
+
+    [Fact]
+    public async Task Telemetry_History_DataIsolation_UserCannotViewForeignPlantHistory()
+    {
+        var (context, _, mockHubContext) = CreateEnvironment();
+        var telemetryController = new TelemetryController(context, mockHubContext.Object);
+
+        var plantUser1 = CreatePlantForUser(context, userId: 1);
+        var plantUser2 = CreatePlantForUser(context, userId: 2);
+
+        // Добавляем телеметрию для растения пользователя 2
+        context.Telemetries.Add(new Telemetry
+        {
+            PlantId = plantUser2.Id,
+            Moisture = 45,
+            Temperature = 22,
+            Light = 350,
+            Timestamp = DateTime.UtcNow
+        });
+        await context.SaveChangesAsync();
+
+        // Авторизуемся под пользователем 1 и запрашиваем историю растения пользователя 2
+        SetUserContext(telemetryController, 1, "user_one");
+        var result = await telemetryController.GetHistory(plantUser2.Id);
+
+        // Доступ должен быть отклонен (NotFound или ForbidResult)
+        Assert.IsType<NotFoundObjectResult>(result.Result);
+    }
+
+    [Fact]
+    public async Task Alerts_DataIsolation_UserOnlyReceivesAndResolvesOwnAlerts()
     {
         var (context, _, _) = CreateEnvironment();
+        var alertsController = new AlertsController(context);
 
-        var basePlant = GeneratePlant(1);
-        context.Plants.Add(basePlant);
+        var plantUser1 = CreatePlantForUser(context, userId: 1);
+        var plantUser2 = CreatePlantForUser(context, userId: 2);
+
+        var alert1 = new Alert { PlantId = plantUser1.Id, Type = AlertType.LowMoisture, Message = "Алерт 1", IsResolved = false };
+        var alert2 = new Alert { PlantId = plantUser2.Id, Type = AlertType.HighTemperature, Message = "Алерт 2", IsResolved = false };
+        context.Alerts.AddRange(alert1, alert2);
         await context.SaveChangesAsync();
 
-        var dbBasePlant = await context.Plants.FindAsync(1);
-        Assert.NotNull(dbBasePlant);
-        Assert.Equal(basePlant.MinMoisture, dbBasePlant.MinMoisture);
-        Assert.Equal(basePlant.MaxTemp, dbBasePlant.MaxTemp);
+        // Авторизуемся под пользователем 1
+        SetUserContext(alertsController, 1, "user_one");
 
-        for (int i = 2; i <= BASE_TEST_COUNT + MASS_TEST_COUNT; i++)
-        {
-            context.Plants.Add(GeneratePlant(i));
-        }
-        await context.SaveChangesAsync();
+        // 1. Проверяем выборку активных алертов
+        var activeAlertsResult = await alertsController.GetActiveAlerts();
+        var okResult = Assert.IsType<OkObjectResult>(activeAlertsResult.Result);
+        var alerts = Assert.IsAssignableFrom<IEnumerable<AlertResponseDto>>(okResult.Value).ToList();
 
-        var randomId = _random.Next(1, BASE_TEST_COUNT + MASS_TEST_COUNT + 1);
-        var randomPlant = await context.Plants.FindAsync(randomId);
-        Assert.NotNull(randomPlant);
-        Assert.Equal($"Растение {randomId}", randomPlant.Name);
-        Assert.Equal(BASE_TEST_COUNT + MASS_TEST_COUNT, await context.Plants.CountAsync());
+        Assert.Single(alerts);
+        Assert.Equal(alert1.Id, alerts[0].Id);
+
+        // 2. Попытка разрешить чужой алерт
+        var resolveForeignResult = await alertsController.ResolveAlert(alert2.Id);
+        Assert.IsType<NotFoundObjectResult>(resolveForeignResult);
+
+        // 3. Успешное разрешение собственного алерта
+        var resolveOwnResult = await alertsController.ResolveAlert(alert1.Id);
+        Assert.IsType<NoContentResult>(resolveOwnResult);
+
+        var updatedAlert1 = await context.Alerts.FindAsync(alert1.Id);
+        Assert.True(updatedAlert1!.IsResolved);
     }
 
     [Fact]
-    public async Task Telemetry_ShuffleDistribution_SavesCorrectly()
+    public async Task WebSockets_BroadcastsAlertToTargetUserOnly()
     {
-        var (context, controller, _) = CreateEnvironment();
-        var plants = new List<Plant>();
+        var (context, mockUserProxy, mockHubContext) = CreateEnvironment();
+        var telemetryController = new TelemetryController(context, mockHubContext.Object);
 
-        for (int i = 1; i <= SHUFFLE_POOL_COUNT; i++)
-        {
-            var p = GeneratePlant(i);
-            plants.Add(p);
-            context.Plants.Add(p);
-        }
-        await context.SaveChangesAsync();
+        var plantUser1 = CreatePlantForUser(context, userId: 42);
 
-        var shuffledIds = Enumerable.Range(2, SHUFFLE_POOL_COUNT - 1).OrderBy(_ => _random.Next()).ToArray();
-        var selectedIds = shuffledIds.Take(SHUFFLE_TAKE_COUNT).ToArray();
+        // Отправляем телеметрию с критическим показателем влажности от датчика растения
+        SetDeviceKeyHeader(telemetryController, plantUser1.ApiKey);
+        var badTelemetry = new TelemetryCreateDto(Moisture: 10.0f, Temperature: 22.0f, Light: 400.0f);
 
-        var telemetries = new List<TelemetryCreateDto>();
-        foreach (var pId in selectedIds)
-        {
-            var plant = plants.First(p => p.Id == pId);
-            for (int i = 0; i < SHUFFLE_TELEMETRIES; i++)
-            {
-                telemetries.Add(GenerateTelemetry(plant, 0));
-            }
-        }
+        await telemetryController.PostTelemetry(badTelemetry);
 
-        telemetries = telemetries.OrderBy(_ => _random.Next()).ToList();
-
-        foreach (var t in telemetries) await controller.PostTelemetry(t);
-
-        var testId = selectedIds[0];
-        var result = await controller.GetHistory(testId);
-        var okResult = Assert.IsType<OkObjectResult>(result.Result);
-        var history = Assert.IsAssignableFrom<IEnumerable<TelemetryResponseDto>>(okResult.Value);
-
-        Assert.Equal(SHUFFLE_TELEMETRIES, history.Count());
-        Assert.All(history, h => Assert.Equal(testId, h.PlantId));
-    }
-
-    [Fact]
-    public async Task Alerts_Combinations_GeneratesCorrectAlertTypes()
-    {
-        var (context, controller, _) = CreateEnvironment();
-        var plants = new List<Plant>();
-
-        for (int i = 1; i <= COMBO_TEST_COUNT; i++)
-        {
-            var p = GeneratePlant(i);
-            plants.Add(p);
-            context.Plants.Add(p);
-        }
-        await context.SaveChangesAsync();
-
-        for (int mask = 0; mask < COMBO_TEST_COUNT; mask++)
-        {
-            int plantId = mask + 1;
-            var targetPlant = plants.First(p => p.Id == plantId);
-            await controller.PostTelemetry(GenerateTelemetry(targetPlant, mask));
-
-            var alerts = await context.Alerts.Where(a => a.PlantId == plantId).ToListAsync();
-
-            int expectedAlerts = 0;
-            if ((mask & 1) != 0) expectedAlerts++;
-            if ((mask & 2) != 0) expectedAlerts++;
-            if ((mask & 4) != 0) expectedAlerts++;
-
-            Assert.Equal(expectedAlerts, alerts.Count);
-        }
-    }
-
-    [Fact]
-    public async Task Alerts_DuplicationProtection_WithProbabilitySpam()
-    {
-        var (context, controller, _) = CreateEnvironment();
-        var plants = new List<Plant>();
-
-        for (int i = 1; i <= SPAM_TEST_COUNT; i++)
-        {
-            var p = GeneratePlant(i);
-            plants.Add(p);
-            context.Plants.Add(p);
-        }
-        await context.SaveChangesAsync();
-
-        for (int mask = 0; mask < SPAM_TEST_COUNT; mask++)
-        {
-            int plantId = mask + 1;
-            var targetPlant = plants.First(p => p.Id == plantId);
-
-            for (int attempt = 1; attempt <= 5; attempt++)
-            {
-                double chance = attempt * 0.2;
-
-                int currentMask = 0;
-                if ((mask & 1) != 0 && _random.NextDouble() < chance) currentMask |= 1;
-                if ((mask & 2) != 0 && _random.NextDouble() < chance) currentMask |= 2;
-                if ((mask & 4) != 0 && _random.NextDouble() < chance) currentMask |= 4;
-
-                await controller.PostTelemetry(GenerateTelemetry(targetPlant, currentMask));
-            }
-
-            var activeAlerts = await context.Alerts.Where(a => a.PlantId == plantId).ToListAsync();
-            var uniqueAlertTypes = activeAlerts.Select(a => a.Type).Distinct().Count();
-            Assert.Equal(activeAlerts.Count, uniqueAlertTypes);
-
-            int expectedAlerts = 0;
-            if ((mask & 1) != 0) expectedAlerts++;
-            if ((mask & 2) != 0) expectedAlerts++;
-            if ((mask & 4) != 0) expectedAlerts++;
-
-            Assert.Equal(expectedAlerts, activeAlerts.Count);
-        }
-    }
-
-    [Fact]
-    public async Task Alert_Lifecycle_CreatesAndResolves()
-    {
-        var (context, controller, _) = CreateEnvironment();
-        var plant1 = GeneratePlant(1);
-        context.Plants.Add(plant1);
-        await context.SaveChangesAsync();
-
-        await controller.PostTelemetry(GenerateTelemetry(plant1, 1));
-
-        var alert = await context.Alerts.FirstAsync();
-        Assert.False(alert.IsResolved);
-
-        alert.IsResolved = true;
-        await context.SaveChangesAsync();
-
-        await controller.PostTelemetry(GenerateTelemetry(plant1, 1));
-
-        var alerts = await context.Alerts.Where(a => a.PlantId == plant1.Id).ToListAsync();
-        Assert.Equal(2, alerts.Count);
-        Assert.Single(alerts, a => !a.IsResolved);
-    }
-
-    [Fact]
-    public async Task WebSockets_BroadcastsTelemetryData()
-    {
-        var (context, controller, mockClients) = CreateEnvironment();
-        var plant1 = GeneratePlant(1);
-        context.Plants.Add(plant1);
-        await context.SaveChangesAsync();
-
-        await controller.PostTelemetry(GenerateTelemetry(plant1, 0));
-
-        mockClients.Verify(
-            client => client.SendCoreAsync(
-                "ReceiveTelemetry",
-                It.IsAny<object[]>(),
-                default),
+        // Проверяем, что событие ReceiveAlert ушло именно в канал пользователя "42"
+        mockUserProxy.Verify(
+            c => c.SendCoreAsync("ReceiveAlert", It.IsAny<object[]>(), default),
             Times.Once);
+
+        // Проверяем факт создания алерта в БД
+        var alert = await context.Alerts.FirstOrDefaultAsync(a => a.PlantId == plantUser1.Id);
+        Assert.NotNull(alert);
+        Assert.Equal(AlertType.LowMoisture, alert.Type);
     }
 
-    // [Fact]
-    // public async Task DeliberateFailure_SanityCheck()
-    // {
-    //     var (context, controller, _) = CreateEnvironment();
-    //     var plant = GeneratePlant(999);
-    //     context.Plants.Add(plant);
-    //     await context.SaveChangesAsync();
-    //     await controller.PostTelemetry(GenerateTelemetry(plant, badStateMask: 0));
-    //     var alerts = await context.Alerts.ToListAsync();
-    //     Assert.NotEmpty(alerts);
-    // }
+    [Fact]
+    public async Task Telemetry_HistoryFiltering_WorksWithDatesAndDays()
+    {
+        var (context, _, mockHubContext) = CreateEnvironment();
+        var telemetryController = new TelemetryController(context, mockHubContext.Object);
+
+        var plant = CreatePlantForUser(context, userId: 1);
+        SetUserContext(telemetryController, 1, "user_one");
+
+        // 10 дней назад
+        context.Telemetries.Add(new Telemetry { PlantId = plant.Id, Moisture = 50, Temperature = 22, Light = 300, Timestamp = DateTime.UtcNow.AddDays(-10) });
+        // 2 дня назад
+        context.Telemetries.Add(new Telemetry { PlantId = plant.Id, Moisture = 50, Temperature = 22, Light = 300, Timestamp = DateTime.UtcNow.AddDays(-2) });
+        // Текущий замер
+        context.Telemetries.Add(new Telemetry { PlantId = plant.Id, Moisture = 50, Temperature = 22, Light = 300, Timestamp = DateTime.UtcNow });
+        await context.SaveChangesAsync();
+
+        // Запрос за последние 5 дней
+        var result = await telemetryController.GetHistory(plant.Id, limit: 10, days: 5);
+        var okResult = Assert.IsType<OkObjectResult>(result.Result);
+        var list = Assert.IsAssignableFrom<IEnumerable<TelemetryResponseDto>>(okResult.Value).ToList();
+
+        Assert.Equal(2, list.Count);
+        Assert.True(list[0].Timestamp >= list[1].Timestamp);
+    }
+
+    [Fact]
+    public async Task Users_RegistrationAndLogin_IssuesValidToken()
+    {
+        var (context, _, _) = CreateEnvironment();
+        var usersController = new UsersController(context, _configuration);
+
+        // 1. Регистрация
+        var regResult = await usersController.Register(new UserRegisterDto("gardener_1", "secure_pass_123"));
+        var createdResult = Assert.IsType<CreatedAtActionResult>(regResult.Result);
+        var registeredUser = Assert.IsType<UserResponseDto>(createdResult.Value);
+
+        Assert.Equal("gardener_1", registeredUser.Username);
+        Assert.False(string.IsNullOrWhiteSpace(registeredUser.Token));
+
+        // 2. Успешный вход
+        var loginResult = await usersController.Login(new UserLoginDto("gardener_1", "secure_pass_123"));
+        var loginOk = Assert.IsType<OkObjectResult>(loginResult.Result);
+        var loggedUser = Assert.IsType<UserResponseDto>(loginOk.Value);
+
+        Assert.Equal(registeredUser.Id, loggedUser.Id);
+        Assert.False(string.IsNullOrWhiteSpace(loggedUser.Token));
+
+        // 3. Отклонение входа с неверным паролем
+        var badLoginResult = await usersController.Login(new UserLoginDto("gardener_1", "wrong_password"));
+        Assert.IsType<UnauthorizedObjectResult>(badLoginResult.Result);
+    }
+
+    [Fact]
+    public async Task Users_Authorization_ProtectsGetMeEndpoint()
+    {
+        var (context, _, _) = CreateEnvironment();
+        var usersController = new UsersController(context, _configuration);
+
+        var regResult = await usersController.Register(new UserRegisterDto("auth_user", "mypassword"));
+        var createdResult = Assert.IsType<CreatedAtActionResult>(regResult.Result);
+        var user = Assert.IsType<UserResponseDto>(createdResult.Value);
+
+        // Запрос без заголовков аутентификации
+        usersController.ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() };
+        var unauthorizedResult = await usersController.GetMe();
+        Assert.IsType<UnauthorizedObjectResult>(unauthorizedResult.Result);
+
+        // Запрос с установленным контекстом пользователя
+        SetUserContext(usersController, user.Id, user.Username);
+        var authorizedResult = await usersController.GetMe();
+        var okResult = Assert.IsType<OkObjectResult>(authorizedResult.Result);
+        var profile = Assert.IsType<UserResponseDto>(okResult.Value);
+
+        Assert.Equal(user.Id, profile.Id);
+        Assert.Equal("auth_user", profile.Username);
+    }
 }

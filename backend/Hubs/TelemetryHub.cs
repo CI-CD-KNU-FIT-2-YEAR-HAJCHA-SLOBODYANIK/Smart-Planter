@@ -4,5 +4,5 @@ namespace SmartPlanter.Api.Hubs;
 
 public class TelemetryHub : Hub
 {
-    // Хаб выступает точкой подключения клиентов (клиент подписывается на события)
+    // Хаб трансляции событий: ReceiveTelemetry, ReceiveAlert, ReceiveWatering
 }

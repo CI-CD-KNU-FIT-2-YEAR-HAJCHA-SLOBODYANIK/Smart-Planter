@@ -7,8 +7,7 @@ public class Telemetry
     public int PlantId { get; set; }
     public Plant? Plant { get; set; }
 
-
-    public float Moisture { get; set; }     // % (0.0 - 100.0)
+    public float Moisture { get; set; }     // %
     public float Temperature { get; set; }  // °C
     public float Light { get; set; }        // Lux
 

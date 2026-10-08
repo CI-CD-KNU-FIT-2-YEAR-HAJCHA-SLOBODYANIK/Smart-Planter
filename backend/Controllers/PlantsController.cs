@@ -1,4 +1,5 @@
 ﻿using System.Security.Claims;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
@@ -9,6 +10,7 @@ using SmartPlanter.Api.Models;
 
 namespace SmartPlanter.Api.Controllers;
 
+[Authorize]
 [ApiController]
 [Route("api/v1/[controller]")]
 public class PlantsController : ControllerBase
@@ -22,35 +24,30 @@ public class PlantsController : ControllerBase
         _hubContext = hubContext;
     }
 
-    private int? GetCurrentUserId()
+    private int GetCurrentUserId()
     {
         var claim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-        return int.TryParse(claim, out var id) ? id : null;
+        return int.TryParse(claim, out var id) ? id : 0;
     }
 
     [HttpGet]
-    public async Task<ActionResult<IEnumerable<PlantResponseDto>>> GetAll([FromQuery] int? userId = null)
+    public async Task<ActionResult<IEnumerable<PlantResponseDto>>> GetAll()
     {
-        var query = _context.Plants.AsQueryable();
+        var userId = GetCurrentUserId();
 
-        var effectiveUserId = userId ?? GetCurrentUserId();
-        if (effectiveUserId.HasValue)
-        {
-            query = query.Where(p => p.UserId == effectiveUserId.Value);
-        }
-
-        var plants = await query
+        var plants = await _context.Plants
+            .Where(p => p.UserId == userId)
             .Select(p => new PlantResponseDto(
                 p.Id,
                 p.Name,
                 p.Species,
+                p.ApiKey,
                 p.MinMoisture,
                 p.MaxMoisture,
                 p.MinTemp,
                 p.MaxTemp,
                 p.MinLight,
-                p.CreatedAt,
-                p.UserId))
+                p.CreatedAt))
             .ToListAsync();
 
         return Ok(plants);
@@ -59,27 +56,19 @@ public class PlantsController : ControllerBase
     [HttpPost]
     public async Task<ActionResult<PlantResponseDto>> Create([FromBody] PlantCreateDto dto)
     {
-        var targetUserId = dto.UserId ?? GetCurrentUserId();
-
-        if (targetUserId.HasValue)
-        {
-            var userExists = await _context.Users.AnyAsync(u => u.Id == targetUserId.Value);
-            if (!userExists)
-            {
-                return BadRequest($"Користувача з ID {targetUserId.Value} не існує.");
-            }
-        }
+        var userId = GetCurrentUserId();
 
         var plant = new Plant
         {
+            UserId = userId,
+            ApiKey = Guid.NewGuid().ToString("N"),
             Name = dto.Name,
             Species = dto.Species,
             MinMoisture = dto.MinMoisture,
             MaxMoisture = dto.MaxMoisture,
             MinTemp = dto.MinTemp,
             MaxTemp = dto.MaxTemp,
-            MinLight = dto.MinLight,
-            UserId = targetUserId
+            MinLight = dto.MinLight
         };
 
         _context.Plants.Add(plant);
@@ -89,13 +78,13 @@ public class PlantsController : ControllerBase
             plant.Id,
             plant.Name,
             plant.Species,
+            plant.ApiKey,
             plant.MinMoisture,
             plant.MaxMoisture,
             plant.MinTemp,
             plant.MaxTemp,
             plant.MinLight,
-            plant.CreatedAt,
-            plant.UserId);
+            plant.CreatedAt);
 
         return CreatedAtAction(nameof(GetAll), new { id = plant.Id }, response);
     }
@@ -103,13 +92,18 @@ public class PlantsController : ControllerBase
     [HttpPost("{id:int}/water")]
     public async Task<IActionResult> WaterPlant(int id)
     {
-        var plant = await _context.Plants.FindAsync(id);
+        var userId = GetCurrentUserId();
+
+        // Проверяем принадлежность растения текущему авторизованному пользователю
+        var plant = await _context.Plants
+            .FirstOrDefaultAsync(p => p.Id == id && p.UserId == userId);
+
         if (plant == null)
         {
             return NotFound($"Рослину з ID {id} не знайдено.");
         }
 
-        // Закрываем активные оповещения о недостатке влаги
+        // Автоматически закрываем активные предупреждения о недостатке влаги
         var lowMoistureAlerts = await _context.Alerts
             .Where(a => a.PlantId == id && a.Type == AlertType.LowMoisture && !a.IsResolved)
             .ToListAsync();
@@ -122,8 +116,9 @@ public class PlantsController : ControllerBase
 
         await _context.SaveChangesAsync();
 
-        // Оповещение WebSocket клиентов о факте полива
-        await _hubContext.Clients.All.SendAsync("ReceiveWatering", new { plantId = id, timestamp = DateTime.UtcNow });
+        // Адресная отправка события полива только владельцу растения
+        await _hubContext.Clients.User(userId.ToString())
+            .SendAsync("ReceiveWatering", new { plantId = id, timestamp = DateTime.UtcNow });
 
         return Ok(new { message = $"Полив для рослини '{plant.Name}' успішно зафіксовано." });
     }

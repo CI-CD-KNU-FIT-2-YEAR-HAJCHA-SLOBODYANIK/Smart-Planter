@@ -1,10 +1,13 @@
-﻿using Microsoft.AspNetCore.Mvc;
+﻿using System.Security.Claims;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using SmartPlanter.Api.Data;
 using SmartPlanter.Api.DTOs;
 
 namespace SmartPlanter.Api.Controllers;
 
+[Authorize]
 [ApiController]
 [Route("api/v1/[controller]")]
 public class AlertsController : ControllerBase
@@ -16,12 +19,21 @@ public class AlertsController : ControllerBase
         _context = context;
     }
 
+    private int GetCurrentUserId()
+    {
+        var claim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+        return int.TryParse(claim, out var id) ? id : 0;
+    }
+
     [HttpGet("active")]
     public async Task<ActionResult<IEnumerable<AlertResponseDto>>> GetActiveAlerts([FromQuery] int? plantId = null)
     {
+        var userId = GetCurrentUserId();
+
+        // Выборка только среди растений, принадлежащих текущему пользователю
         var query = _context.Alerts
             .Include(a => a.Plant)
-            .Where(a => !a.IsResolved);
+            .Where(a => !a.IsResolved && a.Plant != null && a.Plant.UserId == userId);
 
         if (plantId.HasValue)
         {
@@ -48,7 +60,13 @@ public class AlertsController : ControllerBase
     [HttpPut("{id:int}/resolve")]
     public async Task<IActionResult> ResolveAlert(int id)
     {
-        var alert = await _context.Alerts.FindAsync(id);
+        var userId = GetCurrentUserId();
+
+        // Поиск инцидента с проверкой владения связанным растением
+        var alert = await _context.Alerts
+            .Include(a => a.Plant)
+            .FirstOrDefaultAsync(a => a.Id == id && a.Plant != null && a.Plant.UserId == userId);
+
         if (alert == null)
         {
             return NotFound($"Інцидент з ID {id} не знайдено.");

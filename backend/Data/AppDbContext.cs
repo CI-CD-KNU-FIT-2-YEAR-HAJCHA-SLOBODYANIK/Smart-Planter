@@ -21,18 +21,24 @@ public class AppDbContext : DbContext
             .HasIndex(u => u.Username)
             .IsUnique();
 
-        // Связь один-ко-многим: Пользователь -> Растения
+        // Обязательная связь один-ко-многим: Пользователь -> Растения
         modelBuilder.Entity<Plant>()
             .HasOne(p => p.User)
             .WithMany(u => u.Plants)
             .HasForeignKey(p => p.UserId)
-            .OnDelete(DeleteBehavior.SetNull);
+            .IsRequired()
+            .OnDelete(DeleteBehavior.Cascade);
 
-        // Составной индекс для выборки истории измерений
+        // Уникальный индекс для поиска растения по Device API-Key
+        modelBuilder.Entity<Plant>()
+            .HasIndex(p => p.ApiKey)
+            .IsUnique();
+
+        // Составной индекс для выборки истории измерений по растению и дате
         modelBuilder.Entity<Telemetry>()
             .HasIndex(t => new { t.PlantId, t.Timestamp });
 
-        // Составной индекс для активных инцидентов
+        // Составной индекс для выборки активных инцидентов
         modelBuilder.Entity<Alert>()
             .HasIndex(a => new { a.PlantId, a.IsResolved });
     }

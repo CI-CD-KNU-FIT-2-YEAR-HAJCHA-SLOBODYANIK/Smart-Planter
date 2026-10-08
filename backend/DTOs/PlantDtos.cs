@@ -7,17 +7,16 @@ public record PlantCreateDto(
     float MaxMoisture = 70.0f,
     float MinTemp = 18.0f,
     float MaxTemp = 28.0f,
-    float MinLight = 300.0f,
-    int? UserId = null);
+    float MinLight = 300.0f);
 
 public record PlantResponseDto(
     int Id,
     string Name,
     string Species,
+    string ApiKey,
     float MinMoisture,
     float MaxMoisture,
     float MinTemp,
     float MaxTemp,
     float MinLight,
-    DateTime CreatedAt,
-    int? UserId = null);
+    DateTime CreatedAt);

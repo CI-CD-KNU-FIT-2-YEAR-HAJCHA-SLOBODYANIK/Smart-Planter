@@ -103,8 +103,8 @@ public class UsersController : ControllerBase
         var token = GenerateJwtToken(user);
 
         var plantsDto = user.Plants.Select(p => new PlantResponseDto(
-            p.Id, p.Name, p.Species, p.MinMoisture, p.MaxMoisture,
-            p.MinTemp, p.MaxTemp, p.MinLight, p.CreatedAt, p.UserId));
+            p.Id, p.Name, p.Species, p.ApiKey, p.MinMoisture, p.MaxMoisture,
+            p.MinTemp, p.MaxTemp, p.MinLight, p.CreatedAt));
 
         return Ok(new UserResponseDto(user.Id, user.Username, user.CreatedAt, token, plantsDto));
     }
@@ -129,8 +129,8 @@ public class UsersController : ControllerBase
         }
 
         var plantsDto = user.Plants.Select(p => new PlantResponseDto(
-            p.Id, p.Name, p.Species, p.MinMoisture, p.MaxMoisture,
-            p.MinTemp, p.MaxTemp, p.MinLight, p.CreatedAt, p.UserId));
+            p.Id, p.Name, p.Species, p.ApiKey, p.MinMoisture, p.MaxMoisture,
+            p.MinTemp, p.MaxTemp, p.MinLight, p.CreatedAt));
 
         return Ok(new UserResponseDto(user.Id, user.Username, user.CreatedAt, null, plantsDto));
     }
@@ -148,8 +148,8 @@ public class UsersController : ControllerBase
         }
 
         var plantsDto = user.Plants.Select(p => new PlantResponseDto(
-            p.Id, p.Name, p.Species, p.MinMoisture, p.MaxMoisture,
-            p.MinTemp, p.MaxTemp, p.MinLight, p.CreatedAt, p.UserId));
+            p.Id, p.Name, p.Species, p.ApiKey, p.MinMoisture, p.MaxMoisture,
+            p.MinTemp, p.MaxTemp, p.MinLight, p.CreatedAt));
 
         return Ok(new UserResponseDto(user.Id, user.Username, user.CreatedAt, null, plantsDto));
     }

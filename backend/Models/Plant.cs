@@ -4,9 +4,12 @@ public class Plant
 {
     public int Id { get; set; }
 
-    // Идентификатор владельца (опциональный для обратной совместимости)
-    public int? UserId { get; set; }
+    // Обязательная привязка к владельцу
+    public int UserId { get; set; }
     public User? User { get; set; }
+
+    // Уникальный API-ключ устройства для аутентификации IoT-датчиков
+    public string ApiKey { get; set; } = Guid.NewGuid().ToString("N");
 
     public string Name { get; set; } = string.Empty;
     public string Species { get; set; } = string.Empty;

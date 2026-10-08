@@ -1,7 +1,6 @@
 ﻿namespace SmartPlanter.Api.DTOs;
 
 public record TelemetryCreateDto(
-    int PlantId,
     float Moisture,
     float Temperature,
     float Light,

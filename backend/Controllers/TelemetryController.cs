@@ -1,4 +1,6 @@
-﻿using Microsoft.AspNetCore.Mvc;
+﻿using System.Security.Claims;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 using SmartPlanter.Api.Data;
@@ -21,23 +23,40 @@ public class TelemetryController : ControllerBase
         _hubContext = hubContext;
     }
 
+    private int GetCurrentUserId()
+    {
+        var claim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+        return int.TryParse(claim, out var id) ? id : 0;
+    }
+
     [HttpPost]
     public async Task<ActionResult<TelemetryResponseDto>> PostTelemetry([FromBody] TelemetryCreateDto dto)
     {
-        var plant = await _context.Plants.FindAsync(dto.PlantId);
-        if (plant == null)
+        // Проверка аутентификации датчика через заголовок X-Device-Key
+        if (!Request.Headers.TryGetValue("X-Device-Key", out var apiKeyValues) ||
+            string.IsNullOrWhiteSpace(apiKeyValues.FirstOrDefault()))
         {
-            return NotFound($"Рослину з ID {dto.PlantId} не знайдено.");
+            return Unauthorized("API-ключ пристрою відсутній у заголовку 'X-Device-Key'.");
         }
 
-        // Если метка времени не передана, устанавливается текущее системное время в UTC
+        var deviceKey = apiKeyValues.First()!.Trim();
+
+        var plant = await _context.Plants
+            .FirstOrDefaultAsync(p => p.ApiKey == deviceKey);
+
+        if (plant == null)
+        {
+            return Unauthorized("Недійсний API-ключ пристрою.");
+        }
+
+        // Если устройство не передало время, устанавливаем текущий UTC
         var timestamp = dto.Timestamp.HasValue && dto.Timestamp.Value != default
             ? dto.Timestamp.Value.ToUniversalTime()
             : DateTime.UtcNow;
 
         var entry = new Telemetry
         {
-            PlantId = dto.PlantId,
+            PlantId = plant.Id,
             Moisture = dto.Moisture,
             Temperature = dto.Temperature,
             Light = dto.Light,
@@ -53,7 +72,7 @@ public class TelemetryController : ControllerBase
 
         var newAlerts = new List<Alert>();
 
-        // 1. Контроль влажности почвы
+        // 1. Контроль влажности
         if (entry.Moisture < plant.MinMoisture && !activeAlertTypes.Contains(AlertType.LowMoisture))
         {
             newAlerts.Add(new Alert
@@ -75,7 +94,7 @@ public class TelemetryController : ControllerBase
             });
         }
 
-        // 2. Контроль температуры воздуха
+        // 2. Контроль температуры
         if (entry.Temperature < plant.MinTemp && !activeAlertTypes.Contains(AlertType.LowTemperature))
         {
             newAlerts.Add(new Alert
@@ -116,8 +135,10 @@ public class TelemetryController : ControllerBase
 
         await _context.SaveChangesAsync();
 
-        // Передача измерений клиентам через SignalR
-        await _hubContext.Clients.All.SendAsync("ReceiveTelemetry", new
+        var userTarget = plant.UserId.ToString();
+
+        // Адресная трансляция метрик только владельцу растения
+        await _hubContext.Clients.User(userTarget).SendAsync("ReceiveTelemetry", new
         {
             entry.Id,
             entry.PlantId,
@@ -127,10 +148,10 @@ public class TelemetryController : ControllerBase
             entry.Timestamp
         });
 
-        // Мгновенная рассылка сформированных оповещений
+        // Адресная отправка новых оповещений только владельцу
         foreach (var alert in newAlerts)
         {
-            await _hubContext.Clients.All.SendAsync("ReceiveAlert", new AlertResponseDto(
+            await _hubContext.Clients.User(userTarget).SendAsync("ReceiveAlert", new AlertResponseDto(
                 alert.Id,
                 alert.PlantId,
                 plant.Name,
@@ -151,6 +172,7 @@ public class TelemetryController : ControllerBase
             entry.Timestamp));
     }
 
+    [Authorize]
     [HttpGet("{plantId:int}/history")]
     public async Task<ActionResult<IEnumerable<TelemetryResponseDto>>> GetHistory(
         int plantId,
@@ -160,9 +182,19 @@ public class TelemetryController : ControllerBase
         [FromQuery] DateTime? from = null,
         [FromQuery] DateTime? to = null)
     {
+        var userId = GetCurrentUserId();
+
+        // Проверяем принадлежность запрашиваемого растения текущему пользователю
+        var plantExists = await _context.Plants
+            .AnyAsync(p => p.Id == plantId && p.UserId == userId);
+
+        if (!plantExists)
+        {
+            return NotFound($"Рослину з ID {plantId} не знайдено.");
+        }
+
         var query = _context.Telemetries.Where(t => t.PlantId == plantId);
 
-        // Ограничение по временному срезу назад от текущего момента
         if (days.HasValue)
         {
             var cutoff = DateTime.UtcNow.AddDays(-days.Value);
@@ -174,7 +206,6 @@ public class TelemetryController : ControllerBase
             query = query.Where(t => t.Timestamp >= cutoff);
         }
 
-        // Фильтрация по заданным границам дат
         if (from.HasValue)
         {
             query = query.Where(t => t.Timestamp >= from.Value.ToUniversalTime());
@@ -185,7 +216,6 @@ public class TelemetryController : ControllerBase
             query = query.Where(t => t.Timestamp <= to.Value.ToUniversalTime());
         }
 
-        // Сортировка: от новых записей к старым
         var data = await query
             .OrderByDescending(t => t.Timestamp)
             .Take(limit)

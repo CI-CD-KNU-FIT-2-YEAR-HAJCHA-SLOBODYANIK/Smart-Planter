@@ -2,11 +2,11 @@
 
 public enum AlertType
 {
-    LowMoisture,     // Требуется полив
+    LowMoisture,     // Потрібен полив
     HighMoisture,    // Перелив
-    LowTemperature,  // Переохлаждение
-    HighTemperature, // Перегрев
-    LowLight         // Недоосвещенность
+    LowTemperature,  // Переохолодження
+    HighTemperature, // Перегрів
+    LowLight         // Недостатньо світла
 }
 
 public class Alert
@@ -19,7 +19,6 @@ public class Alert
     public AlertType Type { get; set; }
     public string Message { get; set; } = string.Empty;
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
-
 
     public bool IsResolved { get; set; } = false;
     public DateTime? ResolvedAt { get; set; }

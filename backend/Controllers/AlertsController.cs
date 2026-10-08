@@ -16,13 +16,19 @@ public class AlertsController : ControllerBase
         _context = context;
     }
 
-    // Отримання списку всіх активних інцидентів
     [HttpGet("active")]
-    public async Task<ActionResult<IEnumerable<AlertResponseDto>>> GetActiveAlerts()
+    public async Task<ActionResult<IEnumerable<AlertResponseDto>>> GetActiveAlerts([FromQuery] int? plantId = null)
     {
-        var alerts = await _context.Alerts
+        var query = _context.Alerts
             .Include(a => a.Plant)
-            .Where(a => !a.IsResolved)
+            .Where(a => !a.IsResolved);
+
+        if (plantId.HasValue)
+        {
+            query = query.Where(a => a.PlantId == plantId.Value);
+        }
+
+        var alerts = await query
             .OrderByDescending(a => a.CreatedAt)
             .Select(a => new AlertResponseDto(
                 a.Id,
@@ -39,7 +45,6 @@ public class AlertsController : ControllerBase
         return Ok(alerts);
     }
 
-    // Закриття інциденту за його ID
     [HttpPut("{id:int}/resolve")]
     public async Task<IActionResult> ResolveAlert(int id)
     {

@@ -1,6 +1,6 @@
-﻿namespace SmartPlanter.Api.DTOs;
+﻿using SmartPlanter.Api.Models;
 
-using SmartPlanter.Api.Models;
+namespace SmartPlanter.Api.DTOs;
 
 public record AlertResponseDto(
     int Id,
@@ -10,5 +10,4 @@ public record AlertResponseDto(
     string Message,
     DateTime CreatedAt,
     bool IsResolved,
-    DateTime? ResolvedAt
-);
+    DateTime? ResolvedAt);

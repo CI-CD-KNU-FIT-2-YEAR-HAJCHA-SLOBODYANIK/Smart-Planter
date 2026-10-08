@@ -21,10 +21,6 @@ public class TelemetryController : ControllerBase
         _hubContext = hubContext;
     }
 
-    /*
-     * Точка входу для отримання пакета телеметрії від пристрою.
-     * POST /api/v1/telemetry
-     */
     [HttpPost]
     public async Task<ActionResult<TelemetryResponseDto>> PostTelemetry([FromBody] TelemetryCreateDto dto)
     {
@@ -34,27 +30,33 @@ public class TelemetryController : ControllerBase
             return NotFound($"Рослину з ID {dto.PlantId} не знайдено.");
         }
 
+        // Если метка времени не передана, устанавливается текущее системное время в UTC
+        var timestamp = dto.Timestamp.HasValue && dto.Timestamp.Value != default
+            ? dto.Timestamp.Value.ToUniversalTime()
+            : DateTime.UtcNow;
+
         var entry = new Telemetry
         {
             PlantId = dto.PlantId,
             Moisture = dto.Moisture,
             Temperature = dto.Temperature,
             Light = dto.Light,
-            Timestamp = DateTime.UtcNow
+            Timestamp = timestamp
         };
 
         _context.Telemetries.Add(entry);
 
-        // Отримуємо типи активних незакритих тривог для цієї рослини, щоб уникнути дублювання
         var activeAlertTypes = await _context.Alerts
             .Where(a => a.PlantId == plant.Id && !a.IsResolved)
             .Select(a => a.Type)
             .ToListAsync();
 
-        // 1. Контроль вологості
+        var newAlerts = new List<Alert>();
+
+        // 1. Контроль влажности почвы
         if (entry.Moisture < plant.MinMoisture && !activeAlertTypes.Contains(AlertType.LowMoisture))
         {
-            _context.Alerts.Add(new Alert
+            newAlerts.Add(new Alert
             {
                 PlantId = plant.Id,
                 Type = AlertType.LowMoisture,
@@ -64,7 +66,7 @@ public class TelemetryController : ControllerBase
         }
         else if (entry.Moisture > plant.MaxMoisture && !activeAlertTypes.Contains(AlertType.HighMoisture))
         {
-            _context.Alerts.Add(new Alert
+            newAlerts.Add(new Alert
             {
                 PlantId = plant.Id,
                 Type = AlertType.HighMoisture,
@@ -73,10 +75,10 @@ public class TelemetryController : ControllerBase
             });
         }
 
-        // 2. Контроль температури
+        // 2. Контроль температуры воздуха
         if (entry.Temperature < plant.MinTemp && !activeAlertTypes.Contains(AlertType.LowTemperature))
         {
-            _context.Alerts.Add(new Alert
+            newAlerts.Add(new Alert
             {
                 PlantId = plant.Id,
                 Type = AlertType.LowTemperature,
@@ -86,7 +88,7 @@ public class TelemetryController : ControllerBase
         }
         else if (entry.Temperature > plant.MaxTemp && !activeAlertTypes.Contains(AlertType.HighTemperature))
         {
-            _context.Alerts.Add(new Alert
+            newAlerts.Add(new Alert
             {
                 PlantId = plant.Id,
                 Type = AlertType.HighTemperature,
@@ -95,10 +97,10 @@ public class TelemetryController : ControllerBase
             });
         }
 
-        // 3. Контроль освітленості
+        // 3. Контроль освещенности
         if (entry.Light < plant.MinLight && !activeAlertTypes.Contains(AlertType.LowLight))
         {
-            _context.Alerts.Add(new Alert
+            newAlerts.Add(new Alert
             {
                 PlantId = plant.Id,
                 Type = AlertType.LowLight,
@@ -107,9 +109,14 @@ public class TelemetryController : ControllerBase
             });
         }
 
+        if (newAlerts.Count > 0)
+        {
+            _context.Alerts.AddRange(newAlerts);
+        }
+
         await _context.SaveChangesAsync();
 
-        // Трансляція події всім підключеним клієнтам через WebSocket
+        // Передача измерений клиентам через SignalR
         await _hubContext.Clients.All.SendAsync("ReceiveTelemetry", new
         {
             entry.Id,
@@ -119,6 +126,21 @@ public class TelemetryController : ControllerBase
             entry.Light,
             entry.Timestamp
         });
+
+        // Мгновенная рассылка сформированных оповещений
+        foreach (var alert in newAlerts)
+        {
+            await _hubContext.Clients.All.SendAsync("ReceiveAlert", new AlertResponseDto(
+                alert.Id,
+                alert.PlantId,
+                plant.Name,
+                alert.Type,
+                alert.Message,
+                alert.CreatedAt,
+                alert.IsResolved,
+                alert.ResolvedAt
+            ));
+        }
 
         return Ok(new TelemetryResponseDto(
             entry.Id,
@@ -132,10 +154,39 @@ public class TelemetryController : ControllerBase
     [HttpGet("{plantId:int}/history")]
     public async Task<ActionResult<IEnumerable<TelemetryResponseDto>>> GetHistory(
         int plantId,
-        [FromQuery] int limit = 50)
+        [FromQuery] int limit = 50,
+        [FromQuery] int? days = null,
+        [FromQuery] int? hours = null,
+        [FromQuery] DateTime? from = null,
+        [FromQuery] DateTime? to = null)
     {
-        var data = await _context.Telemetries
-            .Where(t => t.PlantId == plantId)
+        var query = _context.Telemetries.Where(t => t.PlantId == plantId);
+
+        // Ограничение по временному срезу назад от текущего момента
+        if (days.HasValue)
+        {
+            var cutoff = DateTime.UtcNow.AddDays(-days.Value);
+            query = query.Where(t => t.Timestamp >= cutoff);
+        }
+        else if (hours.HasValue)
+        {
+            var cutoff = DateTime.UtcNow.AddHours(-hours.Value);
+            query = query.Where(t => t.Timestamp >= cutoff);
+        }
+
+        // Фильтрация по заданным границам дат
+        if (from.HasValue)
+        {
+            query = query.Where(t => t.Timestamp >= from.Value.ToUniversalTime());
+        }
+
+        if (to.HasValue)
+        {
+            query = query.Where(t => t.Timestamp <= to.Value.ToUniversalTime());
+        }
+
+        // Сортировка: от новых записей к старым
+        var data = await query
             .OrderByDescending(t => t.Timestamp)
             .Take(limit)
             .Select(t => new TelemetryResponseDto(

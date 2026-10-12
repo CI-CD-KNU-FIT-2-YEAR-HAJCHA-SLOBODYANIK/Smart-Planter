@@ -283,16 +283,24 @@ async def generate_telemetry():
     await asyncio.sleep(5)
     init_backend()
 
+    counter = 0
     while True:
         if app_state["device_key"]:
-            app_state["current_moisture"] -= random.uniform(2.0, 4.0)
+            # Швидко знижуємо вологість для демонстрації засухи комісії
+            app_state["current_moisture"] -= random.uniform(3.0, 5.0)
             if app_state["current_moisture"] < 15.0:
                 app_state["current_moisture"] = 15.0
 
+            # Імітуємо зміну дня і ночі (кожні кілька ітерацій світло падатиме до мінімуму)
+            counter += 1
+            is_night = (counter % 4) >= 2
+            light_value = random.uniform(50.0, 100.0) if is_night else random.uniform(400.0, 600.0)
+            temp_value = random.uniform(18.0, 20.0) if is_night else random.uniform(22.0, 26.0)
+
             payload = {
                 "moisture": round(app_state["current_moisture"], 1),
-                "temperature": round(random.uniform(21.0, 23.0), 1),
-                "light": round(random.uniform(400.0, 500.0), 1)
+                "temperature": round(temp_value, 1),
+                "light": round(light_value, 1)
             }
             headers = {"X-Device-Key": app_state["device_key"]}
             try:

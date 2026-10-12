@@ -8,6 +8,10 @@ public record UserLoginDto(
     string Username,
     string Password);
 
+public record UserChangePasswordDto(
+    string OldPassword,
+    string NewPassword);
+
 public record UserResponseDto(
     int Id,
     string Username,

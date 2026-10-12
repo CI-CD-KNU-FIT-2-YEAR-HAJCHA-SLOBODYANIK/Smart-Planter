@@ -89,12 +89,11 @@ public class PlantsController : ControllerBase
         return CreatedAtAction(nameof(GetAll), new { id = plant.Id }, response);
     }
 
-    [HttpPost("{id:int}/water")]
-    public async Task<IActionResult> WaterPlant(int id)
+    [HttpPut("{id:int}")]
+    public async Task<ActionResult<PlantResponseDto>> Update(int id, [FromBody] PlantUpdateDto dto)
     {
         var userId = GetCurrentUserId();
 
-        // Проверяем принадлежность растения текущему авторизованному пользователю
         var plant = await _context.Plants
             .FirstOrDefaultAsync(p => p.Id == id && p.UserId == userId);
 
@@ -103,7 +102,63 @@ public class PlantsController : ControllerBase
             return NotFound($"Рослину з ID {id} не знайдено.");
         }
 
-        // Автоматически закрываем активные предупреждения о недостатке влаги
+        plant.Name = dto.Name;
+        plant.Species = dto.Species;
+        plant.MinMoisture = dto.MinMoisture;
+        plant.MaxMoisture = dto.MaxMoisture;
+        plant.MinTemp = dto.MinTemp;
+        plant.MaxTemp = dto.MaxTemp;
+        plant.MinLight = dto.MinLight;
+
+        await _context.SaveChangesAsync();
+
+        var response = new PlantResponseDto(
+            plant.Id,
+            plant.Name,
+            plant.Species,
+            plant.ApiKey,
+            plant.MinMoisture,
+            plant.MaxMoisture,
+            plant.MinTemp,
+            plant.MaxTemp,
+            plant.MinLight,
+            plant.CreatedAt);
+
+        return Ok(response);
+    }
+
+    [HttpDelete("{id:int}")]
+    public async Task<IActionResult> Delete(int id)
+    {
+        var userId = GetCurrentUserId();
+
+        var plant = await _context.Plants
+            .FirstOrDefaultAsync(p => p.Id == id && p.UserId == userId);
+
+        if (plant == null)
+        {
+            return NotFound($"Рослину з ID {id} не знайдено.");
+        }
+
+        _context.Plants.Remove(plant);
+        await _context.SaveChangesAsync();
+
+        return NoContent();
+    }
+
+    [HttpPost("{id:int}/water")]
+    public async Task<IActionResult> WaterPlant(int id)
+    {
+        var userId = GetCurrentUserId();
+
+        var plant = await _context.Plants
+            .FirstOrDefaultAsync(p => p.Id == id && p.UserId == userId);
+
+        if (plant == null)
+        {
+            return NotFound($"Рослину з ID {id} не знайдено.");
+        }
+
         var lowMoistureAlerts = await _context.Alerts
             .Where(a => a.PlantId == id && a.Type == AlertType.LowMoisture && !a.IsResolved)
             .ToListAsync();
@@ -116,7 +171,6 @@ public class PlantsController : ControllerBase
 
         await _context.SaveChangesAsync();
 
-        // Адресная отправка события полива только владельцу растения
         await _hubContext.Clients.User(userId.ToString())
             .SendAsync("ReceiveWatering", new { plantId = id, timestamp = DateTime.UtcNow });
 

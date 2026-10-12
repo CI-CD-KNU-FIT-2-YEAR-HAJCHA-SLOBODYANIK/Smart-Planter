@@ -135,6 +135,60 @@ public class UsersController : ControllerBase
         return Ok(new UserResponseDto(user.Id, user.Username, user.CreatedAt, null, plantsDto));
     }
 
+    [Authorize]
+    [HttpPut("change-password")]
+    public async Task<IActionResult> ChangePassword([FromBody] UserChangePasswordDto dto)
+    {
+        var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+        if (string.IsNullOrEmpty(userIdClaim) || !int.TryParse(userIdClaim, out var userId))
+        {
+            return Unauthorized("Користувач не авторизований.");
+        }
+
+        if (string.IsNullOrWhiteSpace(dto.NewPassword))
+        {
+            return BadRequest("Новий пароль не може бути порожнім.");
+        }
+
+        var user = await _context.Users.FindAsync(userId);
+        if (user == null)
+        {
+            return NotFound("Користувача не знайдено.");
+        }
+
+        if (user.PasswordHash != HashPassword(dto.OldPassword))
+        {
+            return BadRequest("Невірний поточний пароль.");
+        }
+
+        user.PasswordHash = HashPassword(dto.NewPassword);
+        await _context.SaveChangesAsync();
+
+        return Ok(new { message = "Пароль успішно змінено." });
+    }
+
+    [Authorize]
+    [HttpDelete("me")]
+    public async Task<IActionResult> DeleteMe()
+    {
+        var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+        if (string.IsNullOrEmpty(userIdClaim) || !int.TryParse(userIdClaim, out var userId))
+        {
+            return Unauthorized("Користувач не авторизований.");
+        }
+
+        var user = await _context.Users.FindAsync(userId);
+        if (user == null)
+        {
+            return NotFound("Користувача не знайдено.");
+        }
+
+        _context.Users.Remove(user);
+        await _context.SaveChangesAsync();
+
+        return NoContent();
+    }
+
     [HttpGet("{id:int}")]
     public async Task<ActionResult<UserResponseDto>> GetById(int id)
     {

@@ -9,6 +9,15 @@ public record PlantCreateDto(
     float MaxTemp = 28.0f,
     float MinLight = 300.0f);
 
+public record PlantUpdateDto(
+    string Name,
+    string Species,
+    float MinMoisture,
+    float MaxMoisture,
+    float MinTemp,
+    float MaxTemp,
+    float MinLight);
+
 public record PlantResponseDto(
     int Id,
     string Name,

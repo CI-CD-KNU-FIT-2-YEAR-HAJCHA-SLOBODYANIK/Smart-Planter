@@ -97,7 +97,8 @@ async def cmd_start(message: Message, state: FSMContext):
     if user_state["plant_id"]:
         await message.answer(
             "🪴 Привіт! Ваша рослина вже налаштована.\n"
-            "Скористайтеся меню команд або командою /status для перегляду стану."
+            "Скористайтеся меню команд або командою /status для перегляду стану.\n"
+            "Якщо хочете додати нову рослину (замість поточної) — скористайтеся /newplant."
         )
         await send_or_update_pinned_status(message)
     else:
@@ -109,6 +110,24 @@ async def cmd_start(message: Message, state: FSMContext):
             "Введіть **назву** рослини (наприклад: <i>Моя улюблена орхідея</i>):",
             parse_mode="HTML"
         )
+
+# --- Додавання нової рослини замість поточної ---
+@dp.message(Command("newplant"))
+async def cmd_new_plant(message: Message, state: FSMContext):
+    user_id = message.from_user.id
+    user_state = get_user_state(user_id)
+    user_state["target_chat_id"] = message.chat.id
+
+    # Скидаємо старий ідентифікатор рослини в сесії користувача
+    user_state["plant_id"] = None
+    user_state["device_key"] = None
+
+    await state.set_state(PlantCreationStates.waiting_for_name)
+    await message.answer(
+        "🪴 Давайте налаштуємо **нову рослину**!\n\n"
+        "Введіть **назву** нової рослини (наприклад: <i>Фікус Бенджаміна</i>):",
+        parse_mode="HTML"
+    )
 
 # --- FSM Додавання рослини ---
 @dp.message(PlantCreationStates.waiting_for_name)
@@ -433,14 +452,15 @@ async def main():
     commands = [
         BotCommand(command="start", description="🚀 Запустити бота"),
         BotCommand(command="status", description="📊 Показати поточний стан"),
-        BotCommand(command="water", description="💧 Полити рослину")
+        BotCommand(command="water", description="💧 Полити рослину"),
+        BotCommand(command="newplant", description="➕ Додати нову рослину")
     ]
     await bot.set_my_commands(commands)
 
     asyncio.create_task(generate_telemetry())
     asyncio.create_task(check_alerts_loop())
     asyncio.create_task(auto_refresh_status_loop())
-    print("Бот з підтримкою багатьох користувачів запущено успішно!")
+    print("Бот з підтримкою багатьох користувачів та командою /newplant запущено!")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":

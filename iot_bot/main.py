@@ -16,18 +16,21 @@ bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
 # Сховище станів для кожного користувача окремо за його Telegram ID
+#/* необходимость этого массива вызывает у меня сомнения.
+#   зачем оно надо кроме как чисто для бота данные (например флаг обновления)?
+#*/ большинство полей просто 24/7 перезаписываются с бекенда
 users_state = {}
 
 def get_user_state(user_id: int):
     if user_id not in users_state:
         users_state[user_id] = {
             "jwt_token": None,
-            "plants": [],
+            "plants": [],  #// (тут уже есть мин макс темп и другое)
             "active_plant_id": None,
             "device_key": None,
             "target_chat_id": None,
             "status_message_id": None,
-            "min_moisture": 30.0,
+            "min_moisture": 30.0, #// это ж вообще в растениях находиться, зачем тут эти поля
             "max_moisture": 80.0,
             "min_temp": 18.0,
             "max_temp": 30.0,
@@ -49,7 +52,7 @@ class PlantCreationStates(StatesGroup):
 
 def init_backend_for_user(telegram_id: int):
     user_state = get_user_state(telegram_id)
-    username = f"tg_user_{telegram_id}"
+    username = f"tg_user_{telegram_id}"  #//dry не нарушай 0. пароль тоже
     auth_data = {"username": username, "password": "bot_secure_password_123"}
     try:
         print(f"Спроба авторизації користувача {username} на бекенді...")
@@ -90,7 +93,7 @@ async def cmd_start(message: Message, state: FSMContext):
     if user_state["jwt_token"]:
         headers = {"Authorization": f"Bearer {user_state['jwt_token']}"}
         try:
-            resp = requests.get(f"{BACKEND_API_URL}/plants", headers=headers)
+            resp = requests.get(f"{BACKEND_API_URL}/plants", headers=headers)   #// вроде как вместо этих синхронных можно асинхронные. post тоже
             if resp.status_code == 200:
                 plants = resp.json()
                 user_state["plants"] = plants
@@ -138,7 +141,7 @@ async def cmd_new_plant(message: Message, state: FSMContext):
 @dp.message(Command("credentials"))
 async def cmd_credentials(message: Message):
     user_id = message.from_user.id
-    username = f"tg_user_{user_id}"
+    username = f"tg_user_{user_id}"  #//dry не нарушай 0. пароль тоже
     password = "bot_secure_password_123"
 
     await message.answer(
@@ -271,7 +274,7 @@ async def process_min_light(message: Message, state: FSMContext):
         await message.answer(f"❌ Помилка мережі при створенні рослини: {e}")
 
 # --- Меню вибору та видалення рослин (/myplants) ---
-@dp.message(Command("myplants"))
+@dp.message(Command("myplants")) #// лучше минимизировать вред от нарушения dry здесь 1
 async def cmd_my_plants(message: Message):
     user_id = message.from_user.id
     user_state = get_user_state(user_id)
@@ -306,7 +309,7 @@ async def cmd_my_plants(message: Message):
 
     await message.answer("🌱 **Ваші рослини:**\nОберіть активну для керування або видаліть зайву:", reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard_buttons), parse_mode="HTML")
 
-@dp.callback_query(F.data == "show_my_plants")
+@dp.callback_query(F.data == "show_my_plants") #// лучше минимизировать вред от нарушения dry здесь 1
 async def callback_show_my_plants(callback: CallbackQuery):
     user_id = callback.from_user.id
     user_state = get_user_state(user_id)
@@ -450,7 +453,7 @@ async def callback_resolve_alert(callback: CallbackQuery):
             await callback.answer("✅ Тривогу успішно закрито!", show_alert=True)
             try:
                 # Видаляємо повідомлення з тривогою, щоб не засмічувати чат
-                await callback.message.delete()
+                await callback.message.delete()   #// точно ли нужно удалять?
             except TelegramBadRequest:
                 pass
         else:
@@ -488,7 +491,7 @@ async def send_or_update_pinned_status(message_or_callback: Message | CallbackQu
                 latest = data[0]
                 species_str = f" ({active_plant_species})" if active_plant_species else ""
                 msg = (
-                    f"📊 <b>ПАНЕЛЬ МОНІТОРИНГУ РОСЛИНИ (Live)</b>\n\n"
+                    f"📊 <b>ПАНЕЛЬ МОНІТОРИНГУ РОСЛИНИ (Live)</b>\n\n" #// лучше минимизировать вред от нарушения dry здесь 2
                     f"🌱 Вазон: <b>{active_plant_name}{species_str}</b>\n"
                     f"💧 Вологість ґрунту: <b>{latest.get('moisture')}%</b>\n"
                     f"🌡 Температура: <b>{latest.get('temperature')}°C</b>\n"
@@ -584,7 +587,7 @@ async def callback_water(callback: CallbackQuery):
 
 async def auto_refresh_status_loop():
     while True:
-        await asyncio.sleep(12)
+        await asyncio.sleep(12)  #// её б подробнее как константу
         for user_id, user_state in users_state.items():
             if user_state["jwt_token"] and user_state["active_plant_id"] and user_state["target_chat_id"] and user_state["status_message_id"] and user_state.get("is_viewing_status"):
                 history_url = f"{BACKEND_API_URL}/telemetry/{user_state['active_plant_id']}/history?limit=1"
@@ -606,7 +609,7 @@ async def auto_refresh_status_loop():
                             species_str = f" ({active_plant_species})" if active_plant_species else ""
 
                             msg = (
-                                f"📊 <b>ПАНЕЛЬ МОНІТОРИНГУ РОСЛИНИ (Live)</b>\n\n"
+                                f"📊 <b>ПАНЕЛЬ МОНІТОРИНГУ РОСЛИНИ (Live)</b>\n\n" #// лучше минимизировать вред от нарушения dry здесь 2
                                 f"🌱 Вазон: <b>{active_plant_name}{species_str}</b>\n"
                                 f"💧 Вологість ґрунту: <b>{latest.get('moisture')}%</b>\n"
                                 f"🌡 Температура: <b>{latest.get('temperature')}°C</b>\n"
@@ -623,7 +626,7 @@ async def auto_refresh_status_loop():
                 except Exception:
                     pass
 
-async def check_alerts_loop():
+async def check_alerts_loop(): #// настроить WebSockets надо, а не спамить зачем то
     while True:
         await asyncio.sleep(15)
         for user_id, user_state in users_state.items():
@@ -701,7 +704,7 @@ async def check_alerts_loop():
                     pass
 
 async def generate_telemetry():
-    """Симулює телеметрію з урахуванням зміни дня/ночі та сезонів (Норма -> Літо -> Зима)"""
+    """Симулює телеметрію з урахуванням зміни дня/ночі та сезонів (Норма -> Літо -> Зима)""" #// а зачем нам сезоны и время вообще мы только показать протестировать
     await asyncio.sleep(5)
     counter = 0
     while True:

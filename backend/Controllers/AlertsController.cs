@@ -30,7 +30,6 @@ public class AlertsController : ControllerBase
     {
         var userId = GetCurrentUserId();
 
-        // Выборка только среди растений, принадлежащих текущему пользователю
         var query = _context.Alerts
             .Include(a => a.Plant)
             .Where(a => !a.IsResolved && a.Plant != null && a.Plant.UserId == userId);
@@ -62,7 +61,6 @@ public class AlertsController : ControllerBase
     {
         var userId = GetCurrentUserId();
 
-        // Поиск инцидента с проверкой владения связанным растением
         var alert = await _context.Alerts
             .Include(a => a.Plant)
             .FirstOrDefaultAsync(a => a.Id == id && a.Plant != null && a.Plant.UserId == userId);

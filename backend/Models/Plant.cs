@@ -3,8 +3,6 @@
 public class Plant
 {
     public int Id { get; set; }
-
-    // Обязательная привязка к владельцу
     public int UserId { get; set; }
     public User? User { get; set; }
 

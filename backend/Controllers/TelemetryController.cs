@@ -32,7 +32,6 @@ public class TelemetryController : ControllerBase
     [HttpPost]
     public async Task<ActionResult<TelemetryResponseDto>> PostTelemetry([FromBody] TelemetryCreateDto dto)
     {
-        // Проверка аутентификации датчика через заголовок X-Device-Key
         if (!Request.Headers.TryGetValue("X-Device-Key", out var apiKeyValues) ||
             string.IsNullOrWhiteSpace(apiKeyValues.FirstOrDefault()))
         {
@@ -49,7 +48,6 @@ public class TelemetryController : ControllerBase
             return Unauthorized("Недійсний API-ключ пристрою.");
         }
 
-        // Если устройство не передало время, устанавливаем текущий UTC
         var timestamp = dto.Timestamp.HasValue && dto.Timestamp.Value != default
             ? dto.Timestamp.Value.ToUniversalTime()
             : DateTime.UtcNow;
@@ -72,7 +70,6 @@ public class TelemetryController : ControllerBase
 
         var newAlerts = new List<Alert>();
 
-        // 1. Контроль влажности
         if (entry.Moisture < plant.MinMoisture && !activeAlertTypes.Contains(AlertType.LowMoisture))
         {
             newAlerts.Add(new Alert
@@ -94,7 +91,6 @@ public class TelemetryController : ControllerBase
             });
         }
 
-        // 2. Контроль температуры
         if (entry.Temperature < plant.MinTemp && !activeAlertTypes.Contains(AlertType.LowTemperature))
         {
             newAlerts.Add(new Alert
@@ -116,7 +112,6 @@ public class TelemetryController : ControllerBase
             });
         }
 
-        // 3. Контроль освещенности
         if (entry.Light < plant.MinLight && !activeAlertTypes.Contains(AlertType.LowLight))
         {
             newAlerts.Add(new Alert
@@ -137,7 +132,6 @@ public class TelemetryController : ControllerBase
 
         var userTarget = plant.UserId.ToString();
 
-        // Адресная трансляция метрик только владельцу растения
         await _hubContext.Clients.User(userTarget).SendAsync("ReceiveTelemetry", new
         {
             entry.Id,
@@ -148,7 +142,6 @@ public class TelemetryController : ControllerBase
             entry.Timestamp
         });
 
-        // Адресная отправка новых оповещений только владельцу
         foreach (var alert in newAlerts)
         {
             await _hubContext.Clients.User(userTarget).SendAsync("ReceiveAlert", new AlertResponseDto(
@@ -184,7 +177,6 @@ public class TelemetryController : ControllerBase
     {
         var userId = GetCurrentUserId();
 
-        // Проверяем принадлежность запрашиваемого растения текущему пользователю
         var plantExists = await _context.Plants
             .AnyAsync(p => p.Id == plantId && p.UserId == userId);
 

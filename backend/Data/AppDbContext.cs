@@ -16,12 +16,12 @@ public class AppDbContext : DbContext
     {
         base.OnModelCreating(modelBuilder);
 
-        // Уникальный логин пользователя
+        // Логин пользователя
         modelBuilder.Entity<User>()
             .HasIndex(u => u.Username)
             .IsUnique();
 
-        // Обязательная связь один-ко-многим: Пользователь -> Растения
+        // Пользователь -> Растения
         modelBuilder.Entity<Plant>()
             .HasOne(p => p.User)
             .WithMany(u => u.Plants)
@@ -29,16 +29,16 @@ public class AppDbContext : DbContext
             .IsRequired()
             .OnDelete(DeleteBehavior.Cascade);
 
-        // Уникальный индекс для поиска растения по Device API-Key
+        // Device API-Key растений
         modelBuilder.Entity<Plant>()
             .HasIndex(p => p.ApiKey)
             .IsUnique();
 
-        // Составной индекс для выборки истории измерений по растению и дате
+        // для выборки истории измерений по растению и дате
         modelBuilder.Entity<Telemetry>()
             .HasIndex(t => new { t.PlantId, t.Timestamp });
 
-        // Составной индекс для выборки активных инцидентов
+        // для выборки активных инцидентов
         modelBuilder.Entity<Alert>()
             .HasIndex(a => new { a.PlantId, a.IsResolved });
     }

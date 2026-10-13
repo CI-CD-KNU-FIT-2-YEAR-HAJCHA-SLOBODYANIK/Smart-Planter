@@ -22,8 +22,8 @@ def get_user_state(user_id: int):
     if user_id not in users_state:
         users_state[user_id] = {
             "jwt_token": None,
-            "plants": [],  # Список усіх рослин користувача
-            "active_plant_id": None,  # ID поточно вибраної рослини
+            "plants": [],
+            "active_plant_id": None,
             "device_key": None,
             "target_chat_id": None,
             "status_message_id": None,
@@ -32,12 +32,12 @@ def get_user_state(user_id: int):
             "min_temp": 18.0,
             "max_temp": 30.0,
             "min_light": 300.0,
-            "sent_alert_ids": set(),  # Множина для блокування спаму алерів
-            "sim_moistures": {}  # Словник {plant_id: moisture} для стабільної симуляції
+            "sent_alert_ids": set(),
+            "sim_moistures": {},
+            "is_viewing_status": False  # Прапорець для контролю автооновлення статусу
         }
     return users_state[user_id]
 
-# FSM стани для покрокового додавання рослини з розширеними параметрами
 class PlantCreationStates(StatesGroup):
     waiting_for_name = State()
     waiting_for_species = State()
@@ -48,7 +48,6 @@ class PlantCreationStates(StatesGroup):
     waiting_for_min_light = State()
 
 def init_backend_for_user(telegram_id: int):
-    """Авторизація або реєстрація унікального користувача на основі його Telegram ID"""
     user_state = get_user_state(telegram_id)
     username = f"tg_user_{telegram_id}"
     auth_data = {"username": username, "password": "bot_secure_password_123"}
@@ -88,7 +87,6 @@ async def cmd_start(message: Message, state: FSMContext):
 
     init_backend_for_user(user_id)
 
-    # Отримуємо список рослин користувача з бекенда
     if user_state["jwt_token"]:
         headers = {"Authorization": f"Bearer {user_state['jwt_token']}"}
         try:
@@ -128,6 +126,7 @@ async def cmd_new_plant(message: Message, state: FSMContext):
     user_id = message.from_user.id
     user_state = get_user_state(user_id)
     user_state["target_chat_id"] = message.chat.id
+    user_state["is_viewing_status"] = False
 
     await state.set_state(PlantCreationStates.waiting_for_name)
     await message.answer(
@@ -271,11 +270,12 @@ async def process_min_light(message: Message, state: FSMContext):
     except Exception as e:
         await message.answer(f"❌ Помилка мережі при створенні рослини: {e}")
 
-# --- Меню вибору рослин (/myplants) ---
+# --- Меню вибору та видалення рослин (/myplants) ---
 @dp.message(Command("myplants"))
 async def cmd_my_plants(message: Message):
     user_id = message.from_user.id
     user_state = get_user_state(user_id)
+    user_state["is_viewing_status"] = False
 
     headers = {"Authorization": f"Bearer {user_state['jwt_token']}"}
     try:
@@ -297,41 +297,20 @@ async def cmd_my_plants(message: Message):
             InlineKeyboardButton(
                 text=f"{is_active}{p['name']} ({p['species']})",
                 callback_data=f"select_plant_{p['id']}"
+            ),
+            InlineKeyboardButton(
+                text="🗑",
+                callback_data=f"delete_prompt_{p['id']}"
             )
         ])
 
-    await message.answer("🌱 **Ваші рослини:**\nОберіть активну для керування та перегляду:", reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard_buttons), parse_mode="HTML")
-
-@dp.callback_query(F.data.startswith("select_plant_"))
-async def callback_select_plant(callback: CallbackQuery):
-    plant_id = int(callback.data.split("_")[2])
-    user_id = callback.from_user.id
-    user_state = get_user_state(user_id)
-
-    selected_plant = None
-    for p in user_state["plants"]:
-        if p["id"] == plant_id:
-            selected_plant = p
-            break
-
-    if selected_plant:
-        user_state["active_plant_id"] = selected_plant["id"]
-        user_state["device_key"] = selected_plant.get("apiKey")
-        user_state["min_moisture"] = selected_plant.get("minMoisture", 30.0)
-        user_state["max_moisture"] = selected_plant.get("maxMoisture", 80.0)
-        user_state["min_temp"] = selected_plant.get("minTemp", 18.0)
-        user_state["max_temp"] = selected_plant.get("maxTemp", 30.0)
-        user_state["min_light"] = selected_plant.get("minLight", 300.0)
-
-        await callback.answer(f"Вибрано: {selected_plant['name']}")
-        await send_or_update_pinned_status(callback, is_callback=True)
-    else:
-        await callback.answer("Рослину не знайдено.", show_alert=True)
+    await message.answer("🌱 **Ваші рослини:**\nОберіть активну для керування або видаліть зайву:", reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard_buttons), parse_mode="HTML")
 
 @dp.callback_query(F.data == "show_my_plants")
 async def callback_show_my_plants(callback: CallbackQuery):
     user_id = callback.from_user.id
     user_state = get_user_state(user_id)
+    user_state["is_viewing_status"] = False
 
     headers = {"Authorization": f"Bearer {user_state['jwt_token']}"}
     try:
@@ -353,6 +332,10 @@ async def callback_show_my_plants(callback: CallbackQuery):
             InlineKeyboardButton(
                 text=f"{is_active}{p['name']} ({p['species']})",
                 callback_data=f"select_plant_{p['id']}"
+            ),
+            InlineKeyboardButton(
+                text="🗑",
+                callback_data=f"delete_prompt_{p['id']}"
             )
         ])
 
@@ -363,7 +346,7 @@ async def callback_show_my_plants(callback: CallbackQuery):
     await callback.answer()
     try:
         await callback.message.edit_text(
-            "🌱 **Ваші рослини:**\nОберіть активну для керування та перегляду:",
+            "🌱 **Ваші рослини:**\nОберіть активну для керування або видаліть зайву:",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard_buttons),
             parse_mode="HTML"
         )
@@ -371,7 +354,89 @@ async def callback_show_my_plants(callback: CallbackQuery):
     except TelegramBadRequest:
         pass
 
-# --- Обробка закриття тривоги кнопкою ---
+@dp.callback_query(F.data.startswith("select_plant_"))
+async def callback_select_plant(callback: CallbackQuery):
+    plant_id = int(callback.data.split("_")[2])
+    user_id = callback.from_user.id
+    user_state = get_user_state(user_id)
+
+    selected_plant = next((p for p in user_state["plants"] if p["id"] == plant_id), None)
+
+    if selected_plant:
+        user_state["active_plant_id"] = selected_plant["id"]
+        user_state["device_key"] = selected_plant.get("apiKey")
+        user_state["min_moisture"] = selected_plant.get("minMoisture", 30.0)
+        user_state["max_moisture"] = selected_plant.get("maxMoisture", 80.0)
+        user_state["min_temp"] = selected_plant.get("minTemp", 18.0)
+        user_state["max_temp"] = selected_plant.get("maxTemp", 30.0)
+        user_state["min_light"] = selected_plant.get("minLight", 300.0)
+
+        await callback.answer(f"Вибрано: {selected_plant['name']}")
+        await send_or_update_pinned_status(callback, is_callback=True)
+    else:
+        await callback.answer("Рослину не знайдено.", show_alert=True)
+
+# --- Логіка видалення рослини ---
+@dp.callback_query(F.data.startswith("delete_prompt_"))
+async def prompt_delete(callback: CallbackQuery):
+    plant_id = int(callback.data.split("_")[2])
+    user_id = callback.from_user.id
+    user_state = get_user_state(user_id)
+    user_state["is_viewing_status"] = False
+
+    plant = next((p for p in user_state["plants"] if p["id"] == plant_id), None)
+    if not plant:
+        await callback.answer("Рослину не знайдено.", show_alert=True)
+        return
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="🚨 Так, видалити", callback_data=f"execute_delete_{plant_id}"),
+            InlineKeyboardButton(text="❌ Скасувати", callback_data="show_my_plants")
+        ]
+    ])
+    await callback.message.edit_text(
+        f"⚠️ Ви впевнені, що хочете видалити вазон <b>{plant['name']}</b>?\nЦю дію неможливо скасувати.",
+        parse_mode="HTML",
+        reply_markup=keyboard
+    )
+
+@dp.callback_query(F.data.startswith("execute_delete_"))
+async def execute_delete(callback: CallbackQuery):
+    plant_id = int(callback.data.split("_")[2])
+    user_id = callback.from_user.id
+    user_state = get_user_state(user_id)
+
+    headers = {"Authorization": f"Bearer {user_state['jwt_token']}"}
+    try:
+        resp = requests.delete(f"{BACKEND_API_URL}/plants/{plant_id}", headers=headers)
+        if resp.status_code == 204:
+            await callback.answer("✅ Рослину видалено!", show_alert=True)
+
+            user_state["plants"] = [p for p in user_state["plants"] if p["id"] != plant_id]
+            if plant_id in user_state["sim_moistures"]:
+                del user_state["sim_moistures"][plant_id]
+
+            if user_state["active_plant_id"] == plant_id:
+                if user_state["plants"]:
+                    new_active = user_state["plants"][0]
+                    user_state["active_plant_id"] = new_active["id"]
+                    user_state["device_key"] = new_active.get("apiKey")
+                else:
+                    user_state["active_plant_id"] = None
+                    user_state["device_key"] = None
+
+            if user_state["plants"]:
+                await callback_show_my_plants(callback)
+            else:
+                await callback.message.edit_text("🪴 У вас більше немає рослин. Додайте нову через /newplant.")
+                user_state["is_viewing_status"] = False
+        else:
+            await callback.answer(f"⚠️ Помилка видалення: {resp.status_code}", show_alert=True)
+    except Exception:
+        await callback.answer("❌ Сервер недоступний.", show_alert=True)
+
+# --- Обробка закриття тривоги кнопкою з видаленням повідомлення ---
 @dp.callback_query(F.data.startswith("resolve_alert_"))
 async def callback_resolve_alert(callback: CallbackQuery):
     alert_id = int(callback.data.split("_")[2])
@@ -384,13 +449,8 @@ async def callback_resolve_alert(callback: CallbackQuery):
         if resp.status_code in [200, 204]:
             await callback.answer("✅ Тривогу успішно закрито!", show_alert=True)
             try:
-                # Оновлюємо текст повідомлення про тривогу, щоб показати, що вона вирішена
-                original_text = callback.message.text or callback.message.caption or "Попередження"
-                await callback.message.edit_text(
-                    f"✅ <b>[ВИРІШЕНО]</b>\n\n{original_text}",
-                    parse_mode="HTML",
-                    reply_markup=None
-                )
+                # Видаляємо повідомлення з тривогою, щоб не засмічувати чат
+                await callback.message.delete()
             except TelegramBadRequest:
                 pass
         else:
@@ -401,6 +461,7 @@ async def callback_resolve_alert(callback: CallbackQuery):
 async def send_or_update_pinned_status(message_or_callback: Message | CallbackQuery, is_callback: bool = False):
     user_id = message_or_callback.from_user.id
     user_state = get_user_state(user_id)
+    user_state["is_viewing_status"] = True
 
     if not user_state["jwt_token"] or not user_state["active_plant_id"]:
         text = "⏳ Не вибрано активну рослину. Скористайтеся /myplants або /newplant."
@@ -408,7 +469,6 @@ async def send_or_update_pinned_status(message_or_callback: Message | CallbackQu
         else: await message_or_callback.answer(text)
         return
 
-    # Шукаємо назву та вид активної рослини для красивого виводу
     active_plant_name = "Вазон"
     active_plant_species = ""
     for p in user_state.get("plants", []):
@@ -526,7 +586,7 @@ async def auto_refresh_status_loop():
     while True:
         await asyncio.sleep(12)
         for user_id, user_state in users_state.items():
-            if user_state["jwt_token"] and user_state["active_plant_id"] and user_state["target_chat_id"] and user_state["status_message_id"]:
+            if user_state["jwt_token"] and user_state["active_plant_id"] and user_state["target_chat_id"] and user_state["status_message_id"] and user_state.get("is_viewing_status"):
                 history_url = f"{BACKEND_API_URL}/telemetry/{user_state['active_plant_id']}/history?limit=1"
                 headers = {"Authorization": f"Bearer {user_state['jwt_token']}"}
                 try:
@@ -564,7 +624,6 @@ async def auto_refresh_status_loop():
                     pass
 
 async def check_alerts_loop():
-    """Фонова перевірка активних алертів без спаму та з можливістю закриття"""
     while True:
         await asyncio.sleep(15)
         for user_id, user_state in users_state.items():
@@ -585,7 +644,6 @@ async def check_alerts_loop():
                                 alert_type = latest_alert.get("type")
                                 plant_name = latest_alert.get('plantName', 'Вазон')
 
-                                # Формуємо текст залежно від типу алерта
                                 if alert_type == 0:
                                     msg = (
                                         f"🌵 <b>Час для поливу! (Низька вологість)</b>\n\n"
@@ -643,12 +701,15 @@ async def check_alerts_loop():
                     pass
 
 async def generate_telemetry():
-    """Симулює та надсилає телеметрію для ВСІХ рослин кожного користувача паралельно без стрибків"""
+    """Симулює телеметрію з урахуванням зміни дня/ночі та сезонів (Норма -> Літо -> Зима)"""
     await asyncio.sleep(5)
     counter = 0
     while True:
         counter += 1
         is_night = (counter % 4) >= 2
+        full_days = counter // 4
+
+        season_index = (full_days // 10) % 3
 
         for user_id, user_state in users_state.items():
             if user_state["jwt_token"]:
@@ -671,12 +732,24 @@ async def generate_telemetry():
                 if plant_id not in user_state["sim_moistures"]:
                     user_state["sim_moistures"][plant_id] = 85.0
 
-                user_state["sim_moistures"][plant_id] -= random.uniform(3.0, 5.0)
+                moisture_drop = random.uniform(3.0, 5.0)
+
+                if season_index == 1:
+                    moisture_drop *= 1.5
+                elif season_index == 2:
+                    moisture_drop *= 0.5
+
+                user_state["sim_moistures"][plant_id] -= moisture_drop
                 if user_state["sim_moistures"][plant_id] < 15.0:
                     user_state["sim_moistures"][plant_id] = 15.0
 
                 light_value = random.uniform(50.0, 100.0) if is_night else random.uniform(400.0, 600.0)
                 temp_value = random.uniform(18.0, 20.0) if is_night else random.uniform(22.0, 26.0)
+
+                if season_index == 1:
+                    temp_value += 8.0
+                elif season_index == 2:
+                    temp_value -= 10.0
 
                 payload = {
                     "moisture": round(user_state["sim_moistures"][plant_id], 1),
@@ -709,7 +782,7 @@ async def main():
     asyncio.create_task(generate_telemetry())
     asyncio.create_task(check_alerts_loop())
     asyncio.create_task(auto_refresh_status_loop())
-    print("Бот успішно запущено з покращеним виводом та закриттям тривог!")
+    print("Бот успішно запущено з функцією видалення повідомлень після закриття тривоги!")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":

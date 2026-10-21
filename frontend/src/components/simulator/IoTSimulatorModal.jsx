@@ -1,8 +1,8 @@
-import React, { useState, useEffect } from "react";
+import { useState } from "react";
 import { X, Cpu, Send, CheckCircle2, AlertCircle, Sparkles, RefreshCw } from "lucide-react";
 import { postTelemetry } from "../../api/telemetryApi";
 
-export function IoTSimulatorModal({ isOpen, onClose, plants = [], selectedPlantId, onTelemetrySent }) {
+function IoTSimulatorContent({ onClose, plants = [], selectedPlantId, onTelemetrySent }) {
   const [targetPlantId, setTargetPlantId] = useState(selectedPlantId || (plants[0]?.id ?? ""));
   const [customKey, setCustomKey] = useState("");
   const [moisture, setMoisture] = useState(45);
@@ -11,16 +11,6 @@ export function IoTSimulatorModal({ isOpen, onClose, plants = [], selectedPlantI
   const [sending, setSending] = useState(false);
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
-
-  useEffect(() => {
-    if (selectedPlantId) {
-      setTargetPlantId(selectedPlantId);
-    } else if (plants.length > 0 && !targetPlantId) {
-      setTargetPlantId(plants[0].id);
-    }
-  }, [selectedPlantId, plants]);
-
-  if (!isOpen) return null;
 
   const currentPlant = plants.find((p) => p.id === Number(targetPlantId));
   const activeDeviceKey = currentPlant?.apiKey || customKey;
@@ -285,6 +275,19 @@ export function IoTSimulatorModal({ isOpen, onClose, plants = [], selectedPlantI
         </form>
       </div>
     </div>
+  );
+}
+
+export function IoTSimulatorModal({ isOpen, onClose, plants = [], selectedPlantId, onTelemetrySent }) {
+  if (!isOpen) return null;
+  return (
+    <IoTSimulatorContent
+      key={selectedPlantId || "default"}
+      onClose={onClose}
+      plants={plants}
+      selectedPlantId={selectedPlantId}
+      onTelemetrySent={onTelemetrySent}
+    />
   );
 }
 

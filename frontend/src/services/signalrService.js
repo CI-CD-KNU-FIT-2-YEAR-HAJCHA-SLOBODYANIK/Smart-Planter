@@ -22,7 +22,6 @@ export async function startSignalR({
   onStatusChange,
 }) {
   const hubUrl = getSignalRHubUrl();
-  const token = getAuthToken();
 
   // If connection already exists, stop it cleanly
   if (hubConnection) {

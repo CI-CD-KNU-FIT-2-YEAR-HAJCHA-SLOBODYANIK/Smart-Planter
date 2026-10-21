@@ -76,7 +76,7 @@ export async function apiFetch(endpoint, options = {}) {
   }
 
   const contentType = response.headers.get("content-type") || "";
-  let data = null;
+  let data;
   if (contentType.includes("application/json")) {
     try {
       data = await response.json();

@@ -1,5 +1,5 @@
-import React, { useState } from "react";
-import { Activity, AlertTriangle, ArrowUpDown } from "lucide-react";
+import { useState } from "react";
+import { Activity, AlertTriangle } from "lucide-react";
 
 export function HistoryTable({ history = [], plant }) {
   const [maxDisplay, setMaxDisplay] = useState(15);

@@ -1,32 +1,16 @@
-import React, { useState, useEffect } from "react";
+import { useState } from "react";
 import { X, Save, Sliders } from "lucide-react";
 
-export function EditPlantModal({ isOpen, plant, onClose, onUpdate }) {
+function EditPlantForm({ plant, onClose, onUpdate }) {
   const [formData, setFormData] = useState({
-    name: "",
-    species: "",
-    minMoisture: 30,
-    maxMoisture: 70,
-    minTemp: 18,
-    maxTemp: 28,
-    minLight: 300,
+    name: plant.name || "",
+    species: plant.species || "",
+    minMoisture: plant.minMoisture ?? 30,
+    maxMoisture: plant.maxMoisture ?? 70,
+    minTemp: plant.minTemp ?? 18,
+    maxTemp: plant.maxTemp ?? 28,
+    minLight: plant.minLight ?? 300,
   });
-
-  useEffect(() => {
-    if (plant) {
-      setFormData({
-        name: plant.name || "",
-        species: plant.species || "",
-        minMoisture: plant.minMoisture ?? 30,
-        maxMoisture: plant.maxMoisture ?? 70,
-        minTemp: plant.minTemp ?? 18,
-        maxTemp: plant.maxTemp ?? 28,
-        minLight: plant.minLight ?? 300,
-      });
-    }
-  }, [plant]);
-
-  if (!isOpen || !plant) return null;
 
   const handleSubmit = (e) => {
     e.preventDefault();
@@ -199,6 +183,18 @@ export function EditPlantModal({ isOpen, plant, onClose, onUpdate }) {
         </form>
       </div>
     </div>
+  );
+}
+
+export function EditPlantModal({ isOpen, plant, onClose, onUpdate }) {
+  if (!isOpen || !plant) return null;
+  return (
+    <EditPlantForm
+      key={plant.id}
+      plant={plant}
+      onClose={onClose}
+      onUpdate={onUpdate}
+    />
   );
 }
 

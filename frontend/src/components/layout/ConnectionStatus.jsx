@@ -1,5 +1,4 @@
-import React from "react";
-import { Radio, RefreshCw, AlertCircle } from "lucide-react";
+import { Radio, RefreshCw } from "lucide-react";
 
 export function ConnectionStatus({ status, onReconnect, isPollingActive }) {
   let badgeColor = "#6b7280";

@@ -1,4 +1,3 @@
-import React from "react";
 import { Sprout, Plus, RefreshCw, Send, UserCheck, LogIn, Cpu } from "lucide-react";
 import { ConnectionStatus } from "./ConnectionStatus";
 

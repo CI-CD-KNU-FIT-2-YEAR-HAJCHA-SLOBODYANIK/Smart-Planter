@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { fetchPlants, createPlant, updatePlant, deletePlant, waterPlant } from "./api/plantsApi";
 import { fetchActiveAlerts, resolveAlert } from "./api/alertsApi";
 import { fetchTelemetryHistory } from "./api/telemetryApi";

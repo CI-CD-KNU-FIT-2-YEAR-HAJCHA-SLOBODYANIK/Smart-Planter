@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import { useState } from "react";
 import { X, LogIn, UserPlus, LogOut, KeyRound, Server, CheckCircle2, AlertCircle } from "lucide-react";
 import { login, register, logout, changePassword } from "../../api/authApi";
 import { getApiBaseUrl, setApiBaseUrl } from "../../api/client";

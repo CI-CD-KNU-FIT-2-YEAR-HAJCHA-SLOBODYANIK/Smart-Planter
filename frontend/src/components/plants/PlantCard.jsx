@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import { useState } from "react";
 import { Key, Copy, Check, Edit2, Trash2 } from "lucide-react";
 
 export function PlantCard({ plant, isSelected, onSelect, onEdit, onDelete }) {

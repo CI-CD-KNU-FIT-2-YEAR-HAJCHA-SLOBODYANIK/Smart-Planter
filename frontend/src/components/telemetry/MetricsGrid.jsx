@@ -1,30 +1,25 @@
-import React, { useState, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { Droplets, Thermometer, Sun, AlertTriangle, CheckCircle2, Clock } from "lucide-react";
 
+function getTimeAgo(timestamp, now) {
+  if (!timestamp) return "";
+  const time = new Date(timestamp).getTime();
+  const diffSec = Math.floor((now - time) / 1000);
+  if (diffSec < 5) return "тільки що";
+  if (diffSec < 60) return `${diffSec} сек тому`;
+  if (diffSec < 3600) return `${Math.floor(diffSec / 60)} хв тому`;
+  return new Date(timestamp).toLocaleTimeString();
+}
+
 export function MetricsGrid({ latestTelemetry, plant }) {
-  const [timeAgo, setTimeAgo] = useState("");
+  const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
-    if (!latestTelemetry?.timestamp) {
-      setTimeAgo("");
-      return;
-    }
-
-    const updateRelative = () => {
-      const now = Date.now();
-      const time = new Date(latestTelemetry.timestamp).getTime();
-      const diffSec = Math.floor((now - time) / 1000);
-
-      if (diffSec < 5) setTimeAgo("тільки що");
-      else if (diffSec < 60) setTimeAgo(`${diffSec} сек тому`);
-      else if (diffSec < 3600) setTimeAgo(`${Math.floor(diffSec / 60)} хв тому`);
-      else setTimeAgo(new Date(latestTelemetry.timestamp).toLocaleTimeString());
-    };
-
-    updateRelative();
-    const timer = setInterval(updateRelative, 5000);
+    const timer = setInterval(() => setNow(Date.now()), 5000);
     return () => clearInterval(timer);
-  }, [latestTelemetry?.timestamp]);
+  }, []);
+
+  const timeAgo = getTimeAgo(latestTelemetry?.timestamp, now);
 
   if (!plant) return null;
 

@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import { useState } from "react";
 import { X, Send, CheckCircle2, AlertCircle, Key, RefreshCw, Smartphone } from "lucide-react";
 import { login } from "../../api/authApi";
 

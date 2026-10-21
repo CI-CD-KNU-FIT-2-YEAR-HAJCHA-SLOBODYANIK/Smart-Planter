@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
-import { fetchPlants, createPlant, waterPlant } from "./api/plantsApi";
+import { fetchPlants, createPlant, updatePlant, deletePlant, waterPlant } from "./api/plantsApi";
 import { fetchActiveAlerts, resolveAlert } from "./api/alertsApi";
 import { fetchTelemetryHistory } from "./api/telemetryApi";
 import { getStoredUser } from "./api/client";
@@ -12,6 +12,7 @@ import { HistoryTable } from "./components/telemetry/HistoryTable";
 import { TelemetryChart } from "./components/telemetry/TelemetryChart";
 import { AlertsList } from "./components/alerts/AlertsList";
 import { AddPlantModal } from "./components/plants/AddPlantModal";
+import { EditPlantModal } from "./components/plants/EditPlantModal";
 import { OfflineBanner } from "./components/layout/OfflineBanner";
 
 export default function App() {
@@ -23,6 +24,7 @@ export default function App() {
     return cached ? JSON.parse(cached) : [];
   });
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [editingPlant, setEditingPlant] = useState(null);
   const [loading, setLoading] = useState(true);
   const [connectionStatus, setConnectionStatus] = useState("disconnected");
   const [currentUser, setCurrentUser] = useState(getStoredUser());
@@ -154,6 +156,32 @@ export default function App() {
     }
   };
 
+  const handleUpdatePlant = async (plantId, payload) => {
+    try {
+      await updatePlant(plantId, payload);
+      setEditingPlant(null);
+      await loadBaseData();
+    } catch (err) {
+      alert(`Помилка оновлення рослини: ${err.message}`);
+    }
+  };
+
+  const handleDeletePlant = async (plant) => {
+    if (!window.confirm(`Ви дійсно бажаєте видалити вазон «${plant.name}»? Уся історія телеметрії та сповіщень буде видалена.`)) {
+      return;
+    }
+    try {
+      await deletePlant(plant.id);
+      setPlants((prev) => prev.filter((p) => p.id !== plant.id));
+      if (selectedPlantId === plant.id) {
+        const remaining = plants.filter((p) => p.id !== plant.id);
+        setSelectedPlantId(remaining.length > 0 ? remaining[0].id : null);
+      }
+    } catch (err) {
+      alert(`Помилка видалення рослини: ${err.message}`);
+    }
+  };
+
   const selectedPlant = plants.find((p) => p.id === selectedPlantId);
   const latestMetric = history[0];
 
@@ -214,6 +242,8 @@ export default function App() {
             plant={plant}
             isSelected={selectedPlantId === plant.id}
             onSelect={setSelectedPlantId}
+            onEdit={setEditingPlant}
+            onDelete={handleDeletePlant}
           />
         ))}
       </div>
@@ -235,37 +265,112 @@ export default function App() {
               alignItems: "center",
               flexWrap: "wrap",
               gap: 10,
-              marginBottom: 16,
+              marginBottom: 12,
             }}
           >
-            <h3 style={{ margin: 0, color: "#1f2937", fontSize: 18 }}>
-              Поточний стан: <b>{selectedPlant.name}</b>
-              {selectedPlant.species && (
-                <span style={{ fontSize: 14, color: "#6b7280", fontWeight: 400, marginLeft: 8 }}>
-                  ({selectedPlant.species})
-                </span>
-              )}
-            </h3>
+            <div>
+              <h3 style={{ margin: 0, color: "#1f2937", fontSize: 18 }}>
+                Поточний стан: <b>{selectedPlant.name}</b>
+                {selectedPlant.species && (
+                  <span style={{ fontSize: 14, color: "#6b7280", fontWeight: 400, marginLeft: 8 }}>
+                    ({selectedPlant.species})
+                  </span>
+                )}
+              </h3>
+            </div>
 
-            <button
-              onClick={() => handleWater(selectedPlantId)}
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <button
+                onClick={() => setEditingPlant(selectedPlant)}
+                style={{
+                  padding: "8px 14px",
+                  backgroundColor: "#f3f4f6",
+                  color: "#374151",
+                  border: "1px solid #d1d5db",
+                  borderRadius: 8,
+                  cursor: "pointer",
+                  fontWeight: 600,
+                  fontSize: 13,
+                }}
+              >
+                ✏️ Налаштувати
+              </button>
+
+              <button
+                onClick={() => handleWater(selectedPlantId)}
+                style={{
+                  padding: "8px 16px",
+                  backgroundColor: "#0284c7",
+                  color: "#fff",
+                  border: "none",
+                  borderRadius: 8,
+                  cursor: "pointer",
+                  fontWeight: 600,
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 6,
+                  boxShadow: "0 1px 2px rgba(2, 132, 199, 0.3)",
+                  fontSize: 13,
+                }}
+              >
+                💧 Полити рослину
+              </button>
+            </div>
+          </div>
+
+          {/* IoT Device Key snippet banner */}
+          {selectedPlant.apiKey && (
+            <div
               style={{
-                padding: "8px 16px",
-                backgroundColor: "#0284c7",
-                color: "#fff",
-                border: "none",
-                borderRadius: 8,
-                cursor: "pointer",
-                fontWeight: 600,
-                display: "inline-flex",
+                display: "flex",
                 alignItems: "center",
-                gap: 6,
-                boxShadow: "0 1px 2px rgba(2, 132, 199, 0.3)",
+                justifyContent: "space-between",
+                flexWrap: "wrap",
+                gap: 8,
+                padding: "8px 12px",
+                marginBottom: 16,
+                backgroundColor: "#f0fdf4",
+                border: "1px solid #bbf7d0",
+                borderRadius: 8,
+                fontSize: 12,
+                color: "#166534",
               }}
             >
-              💧 Полити рослину
-            </button>
-          </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                <span>🔑 <b>X-Device-Key IoT сенсора:</b></span>
+                <code
+                  style={{
+                    backgroundColor: "#ffffff",
+                    padding: "2px 8px",
+                    borderRadius: 4,
+                    border: "1px solid #86efac",
+                    fontFamily: "monospace",
+                    fontSize: 12,
+                  }}
+                >
+                  {selectedPlant.apiKey}
+                </code>
+              </div>
+              <button
+                onClick={() => {
+                  navigator.clipboard.writeText(selectedPlant.apiKey);
+                  alert("✅ Ключ пристрою X-Device-Key скопійовано до буфера обміну!");
+                }}
+                style={{
+                  background: "#166534",
+                  color: "#fff",
+                  border: "none",
+                  borderRadius: 6,
+                  padding: "4px 10px",
+                  fontSize: 11,
+                  fontWeight: 600,
+                  cursor: "pointer",
+                }}
+              >
+                Скопіювати ключ
+              </button>
+            </div>
+          )}
 
           <MetricsGrid latestTelemetry={latestMetric} plant={selectedPlant} />
           <TelemetryChart
@@ -281,6 +386,13 @@ export default function App() {
         isOpen={isModalOpen}
         onClose={() => setIsModalOpen(false)}
         onCreate={handleCreate}
+      />
+
+      <EditPlantModal
+        isOpen={!!editingPlant}
+        plant={editingPlant}
+        onClose={() => setEditingPlant(null)}
+        onUpdate={handleUpdatePlant}
       />
     </div>
   );

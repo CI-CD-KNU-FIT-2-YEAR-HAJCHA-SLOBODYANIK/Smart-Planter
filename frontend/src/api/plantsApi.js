@@ -1,28 +1,31 @@
-const BASE_URL = "http://localhost:8000/api/v1/plants";
+import { apiFetch } from "./client";
 
 export async function fetchPlants() {
-  const response = await fetch(BASE_URL);
-  if (!response.ok) throw new Error("Не вдалося завантажити список рослин");
-  return response.json();
+  return apiFetch("/plants");
 }
 
 export async function createPlant(plantData) {
-  const response = await fetch(BASE_URL, {
+  return apiFetch("/plants", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(plantData),
+    body: plantData,
   });
-  if (!response.ok) throw new Error("Не вдалося створити рослину");
-  return response.json();
+}
+
+export async function updatePlant(plantId, plantData) {
+  return apiFetch(`/plants/${plantId}`, {
+    method: "PUT",
+    body: plantData,
+  });
+}
+
+export async function deletePlant(plantId) {
+  return apiFetch(`/plants/${plantId}`, {
+    method: "DELETE",
+  });
 }
 
 export async function waterPlant(plantId) {
-  const response = await fetch(`${BASE_URL}/api/v1/plants/${plantId}/water`, {
+  return apiFetch(`/plants/${plantId}/water`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
   });
-  if (!response.ok) {
-    throw new Error(`Помилка поливу: ${response.status}`);
-  }
-  return response.json().catch(() => ({ success: true }));
 }

@@ -52,16 +52,28 @@ export default function App() {
     }
   }, []);
 
-  const loadTelemetry = useCallback(async (plantId) => {
+  const [timeframe, setTimeframe] = useState("30");
+  const [timeframeParams, setTimeframeParams] = useState({ limit: 30 });
+
+  const loadTelemetry = useCallback(async (plantId, params = null) => {
     if (!plantId) return;
     try {
-      const data = await fetchTelemetryHistory(plantId, { limit: 30 });
+      const activeParams = params || timeframeParams;
+      const data = await fetchTelemetryHistory(plantId, activeParams);
       setHistory(data);
       localStorage.setItem("cached_history", JSON.stringify(data));
     } catch (err) {
       console.error("Помилка завантаження телеметрії:", err);
     }
-  }, []);
+  }, [timeframeParams]);
+
+  const handleTimeframeChange = (tfId, params) => {
+    setTimeframe(tfId);
+    setTimeframeParams(params);
+    if (selectedPlantId) {
+      loadTelemetry(selectedPlantId, params);
+    }
+  };
 
   // Initialize Real-time SignalR WebSocket Stream
   const initRealtime = useCallback(() => {
@@ -256,8 +268,12 @@ export default function App() {
           </div>
 
           <MetricsGrid latestTelemetry={latestMetric} plant={selectedPlant} />
-          <TelemetryChart history={history} />
-          <HistoryTable history={history} />
+          <TelemetryChart
+            history={history}
+            onTimeframeChange={handleTimeframeChange}
+            currentTimeframe={timeframe}
+          />
+          <HistoryTable history={history} plant={selectedPlant} />
         </section>
       )}
 

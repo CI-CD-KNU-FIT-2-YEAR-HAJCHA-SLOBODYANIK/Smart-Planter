@@ -13,6 +13,8 @@ import { TelemetryChart } from "./components/telemetry/TelemetryChart";
 import { AlertsList } from "./components/alerts/AlertsList";
 import { AddPlantModal } from "./components/plants/AddPlantModal";
 import { EditPlantModal } from "./components/plants/EditPlantModal";
+import { TelegramBotModal } from "./components/telegram/TelegramBotModal";
+import { AuthModal } from "./components/auth/AuthModal";
 import { OfflineBanner } from "./components/layout/OfflineBanner";
 
 export default function App() {
@@ -25,6 +27,8 @@ export default function App() {
   });
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingPlant, setEditingPlant] = useState(null);
+  const [isTelegramModalOpen, setIsTelegramModalOpen] = useState(false);
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [connectionStatus, setConnectionStatus] = useState("disconnected");
   const [currentUser, setCurrentUser] = useState(getStoredUser());
@@ -182,6 +186,20 @@ export default function App() {
     }
   };
 
+  const handleUserAuthenticated = (user) => {
+    setCurrentUser(user);
+    loadBaseData();
+    initRealtime();
+  };
+
+  const handleUserLoggedOut = () => {
+    setCurrentUser(null);
+    setPlants([]);
+    setAlerts([]);
+    setHistory([]);
+    setSelectedPlantId(null);
+  };
+
   const selectedPlant = plants.find((p) => p.id === selectedPlantId);
   const latestMetric = history[0];
 
@@ -215,6 +233,8 @@ export default function App() {
         onReconnect={initRealtime}
         isPollingActive={true}
         currentUser={currentUser}
+        onOpenTelegramModal={() => setIsTelegramModalOpen(true)}
+        onOpenAuthModal={() => setIsAuthModalOpen(true)}
       />
 
       <AlertsList alerts={alerts} onResolve={handleResolve} />
@@ -393,6 +413,21 @@ export default function App() {
         plant={editingPlant}
         onClose={() => setEditingPlant(null)}
         onUpdate={handleUpdatePlant}
+      />
+
+      <TelegramBotModal
+        isOpen={isTelegramModalOpen}
+        onClose={() => setIsTelegramModalOpen(false)}
+        currentUser={currentUser}
+        onUserAuthenticated={handleUserAuthenticated}
+      />
+
+      <AuthModal
+        isOpen={isAuthModalOpen}
+        onClose={() => setIsAuthModalOpen(false)}
+        currentUser={currentUser}
+        onUserAuthenticated={handleUserAuthenticated}
+        onUserLoggedOut={handleUserLoggedOut}
       />
     </div>
   );

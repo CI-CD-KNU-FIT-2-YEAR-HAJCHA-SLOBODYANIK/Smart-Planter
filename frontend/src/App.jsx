@@ -15,6 +15,7 @@ import { AddPlantModal } from "./components/plants/AddPlantModal";
 import { EditPlantModal } from "./components/plants/EditPlantModal";
 import { TelegramBotModal } from "./components/telegram/TelegramBotModal";
 import { AuthModal } from "./components/auth/AuthModal";
+import { IoTSimulatorModal } from "./components/simulator/IoTSimulatorModal";
 import { OfflineBanner } from "./components/layout/OfflineBanner";
 
 export default function App() {
@@ -29,6 +30,7 @@ export default function App() {
   const [editingPlant, setEditingPlant] = useState(null);
   const [isTelegramModalOpen, setIsTelegramModalOpen] = useState(false);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+  const [isSimulatorModalOpen, setIsSimulatorModalOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [connectionStatus, setConnectionStatus] = useState("disconnected");
   const [currentUser, setCurrentUser] = useState(getStoredUser());
@@ -219,6 +221,15 @@ export default function App() {
     }
   };
 
+  const handleWaterAndResolve = async (plantId, alertId) => {
+    try {
+      await handleWater(plantId);
+      await handleResolve(alertId);
+    } catch (err) {
+      alert(`Помилка: ${err.message}`);
+    }
+  };
+
   return (
     <div style={{ maxWidth: 960, margin: "0 auto", padding: 16 }}>
       <OfflineBanner />
@@ -235,9 +246,15 @@ export default function App() {
         currentUser={currentUser}
         onOpenTelegramModal={() => setIsTelegramModalOpen(true)}
         onOpenAuthModal={() => setIsAuthModalOpen(true)}
+        onOpenSimulatorModal={() => setIsSimulatorModalOpen(true)}
       />
 
-      <AlertsList alerts={alerts} onResolve={handleResolve} />
+      <AlertsList
+        alerts={alerts}
+        onResolve={handleResolve}
+        onWaterAndResolve={handleWaterAndResolve}
+        selectedPlantId={selectedPlantId}
+      />
 
       <h2 style={{ fontSize: 18, color: "#374151", marginBottom: 12 }}>
         Ваші рослини
@@ -428,6 +445,19 @@ export default function App() {
         currentUser={currentUser}
         onUserAuthenticated={handleUserAuthenticated}
         onUserLoggedOut={handleUserLoggedOut}
+      />
+
+      <IoTSimulatorModal
+        isOpen={isSimulatorModalOpen}
+        onClose={() => setIsSimulatorModalOpen(false)}
+        plants={plants}
+        selectedPlantId={selectedPlantId}
+        onTelemetrySent={() => {
+          loadBaseData();
+          if (selectedPlantId) {
+            loadTelemetry(selectedPlantId);
+          }
+        }}
       />
     </div>
   );

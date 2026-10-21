@@ -179,6 +179,8 @@ const styles = {
     alignItems: "center",
     justifyContent: "center",
     zIndex: 100,
+    padding: 16,
+    boxSizing: "border-box",
   },
   modal: {
     background: "#fff",
@@ -186,6 +188,7 @@ const styles = {
     borderRadius: 12,
     width: "100%",
     maxWidth: 400,
+    boxSizing: "border-box",
   },
   modalHeader: {
     display: "flex",
@@ -207,12 +210,16 @@ const styles = {
     display: "grid",
     gridTemplateColumns: "1fr 1fr",
     gap: 8,
+    width: "100%",
+    boxSizing: "border-box",
   },
   input: {
+    width: "100%",
     padding: "8px 10px",
     borderRadius: 6,
     border: "1px solid #d1d5db",
     fontSize: 14,
+    boxSizing: "border-box",
   },
   submitBtn: {
     background: "#166534",

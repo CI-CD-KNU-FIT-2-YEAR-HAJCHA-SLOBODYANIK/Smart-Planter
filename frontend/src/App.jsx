@@ -1,5 +1,11 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { fetchPlants, createPlant, updatePlant, deletePlant, waterPlant } from "./api/plantsApi";
+import {
+  fetchPlants,
+  createPlant,
+  updatePlant,
+  deletePlant,
+  waterPlant,
+} from "./api/plantsApi";
 import { fetchActiveAlerts, resolveAlert } from "./api/alertsApi";
 import { fetchTelemetryHistory } from "./api/telemetryApi";
 import { getStoredUser } from "./api/client";
@@ -63,17 +69,20 @@ export default function App() {
   const [timeframe, setTimeframe] = useState("30");
   const [timeframeParams, setTimeframeParams] = useState({ limit: 30 });
 
-  const loadTelemetry = useCallback(async (plantId, params = null) => {
-    if (!plantId) return;
-    try {
-      const activeParams = params || timeframeParams;
-      const data = await fetchTelemetryHistory(plantId, activeParams);
-      setHistory(data);
-      localStorage.setItem("cached_history", JSON.stringify(data));
-    } catch (err) {
-      console.error("Помилка завантаження телеметрії:", err);
-    }
-  }, [timeframeParams]);
+  const loadTelemetry = useCallback(
+    async (plantId, params = null) => {
+      if (!plantId) return;
+      try {
+        const activeParams = params || timeframeParams;
+        const data = await fetchTelemetryHistory(plantId, activeParams);
+        setHistory(data);
+        localStorage.setItem("cached_history", JSON.stringify(data));
+      } catch (err) {
+        console.error("Помилка завантаження телеметрії:", err);
+      }
+    },
+    [timeframeParams],
+  );
 
   const handleTimeframeChange = (tfId, params) => {
     setTimeframe(tfId);
@@ -89,14 +98,20 @@ export default function App() {
       onTelemetry: (telemetry) => {
         if (telemetry.plantId === selectedPlantIdRef.current) {
           setHistory((prev) => {
-            const updated = [telemetry, ...prev.filter((p) => p.id !== telemetry.id)].slice(0, 50);
+            const updated = [
+              telemetry,
+              ...prev.filter((p) => p.id !== telemetry.id),
+            ].slice(0, 50);
             localStorage.setItem("cached_history", JSON.stringify(updated));
             return updated;
           });
         }
       },
       onAlert: (newAlert) => {
-        setAlerts((prev) => [newAlert, ...prev.filter((a) => a.id !== newAlert.id)]);
+        setAlerts((prev) => [
+          newAlert,
+          ...prev.filter((a) => a.id !== newAlert.id),
+        ]);
       },
       onWatering: (wateringEvent) => {
         if (wateringEvent.plantId === selectedPlantIdRef.current) {
@@ -108,7 +123,9 @@ export default function App() {
           });
         }
         // Also refresh alerts because watering auto-resolves LowMoisture
-        fetchActiveAlerts().then(setAlerts).catch(() => {});
+        fetchActiveAlerts()
+          .then(setAlerts)
+          .catch(() => {});
       },
       onStatusChange: (status) => {
         setConnectionStatus(status);
@@ -173,7 +190,11 @@ export default function App() {
   };
 
   const handleDeletePlant = async (plant) => {
-    if (!window.confirm(`Ви дійсно бажаєте видалити вазон «${plant.name}»? Уся історія телеметрії та сповіщень буде видалена.`)) {
+    if (
+      !window.confirm(
+        `Ви дійсно бажаєте видалити вазон «${plant.name}»? Уся історія телеметрії та сповіщень буде видалена.`,
+      )
+    ) {
       return;
     }
     try {
@@ -261,7 +282,8 @@ export default function App() {
       </h2>
       {plants.length === 0 && !loading && (
         <p style={{ color: "#6b7280", marginBottom: 20 }}>
-          У базі ще немає доданих рослин. Натисніть «Додати рослину», щоб створити першу.
+          У базі ще немає доданих рослин. Натисніть «Додати рослину», щоб
+          створити першу.
         </p>
       )}
 
@@ -309,7 +331,14 @@ export default function App() {
               <h3 style={{ margin: 0, color: "#1f2937", fontSize: 18 }}>
                 Поточний стан: <b>{selectedPlant.name}</b>
                 {selectedPlant.species && (
-                  <span style={{ fontSize: 14, color: "#6b7280", fontWeight: 400, marginLeft: 8 }}>
+                  <span
+                    style={{
+                      fontSize: 14,
+                      color: "#6b7280",
+                      fontWeight: 400,
+                      marginLeft: 8,
+                    }}
+                  >
                     ({selectedPlant.species})
                   </span>
                 )}
@@ -373,8 +402,17 @@ export default function App() {
                 color: "#166534",
               }}
             >
-              <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-                <span>🔑 <b>X-Device-Key IoT сенсора:</b></span>
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 6,
+                  flexWrap: "wrap",
+                }}
+              >
+                <span>
+                  🔑 <b>X-Device-Key IoT сенсора:</b>
+                </span>
                 <code
                   style={{
                     backgroundColor: "#ffffff",
@@ -391,7 +429,9 @@ export default function App() {
               <button
                 onClick={() => {
                   navigator.clipboard.writeText(selectedPlant.apiKey);
-                  alert("✅ Ключ пристрою X-Device-Key скопійовано до буфера обміну!");
+                  alert(
+                    "✅ Ключ пристрою X-Device-Key скопійовано до буфера обміну!",
+                  );
                 }}
                 style={{
                   background: "#166534",
@@ -419,11 +459,13 @@ export default function App() {
         </section>
       )}
 
-      <AddPlantModal
-        isOpen={isModalOpen}
-        onClose={() => setIsModalOpen(false)}
-        onCreate={handleCreate}
-      />
+      {currentUser && (
+        <AddPlantModal
+          isOpen={isModalOpen}
+          onClose={() => setIsModalOpen(false)}
+          onCreate={handleCreate}
+        />
+      )}
 
       <EditPlantModal
         isOpen={!!editingPlant}

@@ -1,4 +1,12 @@
-import { Sprout, Plus, RefreshCw, Send, UserCheck, LogIn, Cpu } from "lucide-react";
+import {
+  Sprout,
+  Plus,
+  RefreshCw,
+  Send,
+  UserCheck,
+  LogIn,
+  Cpu,
+} from "lucide-react";
 import { ConnectionStatus } from "./ConnectionStatus";
 
 export function Header({
@@ -71,7 +79,14 @@ export function Header({
             {currentUser ? (
               <>
                 <UserCheck size={14} color="#166534" />
-                <span style={{ maxWidth: 110, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                <span
+                  style={{
+                    maxWidth: 110,
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
                   {currentUser.username}
                 </span>
               </>
@@ -83,9 +98,11 @@ export function Header({
           </button>
         )}
 
-        <button onClick={onOpenCreateModal} style={styles.btnPrimary}>
-          <Plus size={16} /> Додати рослину
-        </button>
+        {currentUser && (
+          <button onClick={onOpenCreateModal} style={styles.btnPrimary}>
+            <Plus size={16} /> Додати рослину
+          </button>
+        )}
 
         <button
           onClick={onRefresh}

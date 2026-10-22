@@ -12,38 +12,47 @@
 
 ## Швидкий запуск
 
-1. **Клонування репозиторію та перехід у папку:**
+1. **Клонування репозиторію та перехід у папку проєкту:**
 
-   git clone https://github.com/CI-CD-KNU-FIT-2-YEAR-HAJCHA-SLOBODYANIK/Smart-Planter.git smart-planter
-   cd smart-planter
+```bash
+git clone https://github.com/CI-CD-KNU-FIT-2-YEAR-HAJCHA-SLOBODYANIK/Smart-Planter.git smart-planter
+cd smart-planter
+
+```
 
 2. **Запуск сервісів (Backend + PostgreSQL + Telegram Bot):**
+   У папці проєкту (`cd <шлях_до_папки_проєкту>`) виконайте:
 
    docker compose down -v
 
    docker compose up -d --build
 
-3. **Доступ до сервісів:**
+````
 
-   Документація API (Scalar): http://localhost:8000/scalar/v1
-   Специфікація OpenAPI: http://localhost:8000/openapi/v1.json
-   WebSocket Hub (SignalR): http://localhost:8000/hubs/telemetry
-   База даних: localhost:5432
-   БД: smart_planter
-   Користувач: postgres
-   Пароль: postgres_secure_pass
+3. **Доступ до сервісів:**
+* **Документація API (Scalar):** http://localhost:8000/scalar/v1
+* **Специфікація OpenAPI:** http://localhost:8000/openapi/v1.json
+* **WebSocket Hub (SignalR):** http://localhost:8000/hubs/telemetry
+* **База даних:** `localhost:5432`
+* **БД:** `smart_planter`
+* **Користувач:** `postgres`
+* **Пароль:** `postgres_secure_pass`
+
 
 4. **Зупинка:**
+Команди виконуються з папки проєкту (`cd <шлях_до_папки_проєкту>`):
+* **Зупинити роботу контейнерів:**
+```bash
+docker compose down
 
-   **Зупинити роботу контейнерів:**
+````
 
-   docker compose down
+- **Зупинити та видалити збережені дані бази (скидання стану):**
 
-   **Зупинити та видалити збережені дані бази (скидання стану):**
+```bash
+docker compose down -v
 
-   docker compose down -v
-
----
+```
 
 ## Telegram Bot (IoT Моніторинг)
 

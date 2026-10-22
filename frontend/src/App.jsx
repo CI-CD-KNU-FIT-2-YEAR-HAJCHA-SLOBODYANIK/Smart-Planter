@@ -37,6 +37,7 @@ export default function App() {
   const [isTelegramModalOpen, setIsTelegramModalOpen] = useState(false);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [isSimulatorModalOpen, setIsSimulatorModalOpen] = useState(false);
+  const [isCopied, setIsCopied] = useState(false);
   const [loading, setLoading] = useState(true);
   const [connectionStatus, setConnectionStatus] = useState("disconnected");
   const [currentUser, setCurrentUser] = useState(getStoredUser());
@@ -426,15 +427,15 @@ export default function App() {
                   {selectedPlant.apiKey}
                 </code>
               </div>
+
               <button
                 onClick={() => {
                   navigator.clipboard.writeText(selectedPlant.apiKey);
-                  alert(
-                    "✅ Ключ пристрою X-Device-Key скопійовано до буфера обміну!",
-                  );
+                  setIsCopied(true);
+                  setTimeout(() => setIsCopied(false), 2500);
                 }}
                 style={{
-                  background: "#166534",
+                  background: isCopied ? "#15803d" : "#166534",
                   color: "#fff",
                   border: "none",
                   borderRadius: 6,
@@ -442,9 +443,10 @@ export default function App() {
                   fontSize: 11,
                   fontWeight: 600,
                   cursor: "pointer",
+                  transition: "all 0.2s ease",
                 }}
               >
-                Скопіювати ключ
+                {isCopied ? "✓ Скопійовано!" : "Скопійовати ключ"}
               </button>
             </div>
           )}

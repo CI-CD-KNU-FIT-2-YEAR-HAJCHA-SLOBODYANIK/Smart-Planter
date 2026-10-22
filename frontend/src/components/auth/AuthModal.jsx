@@ -1,9 +1,24 @@
 import { useState } from "react";
-import { X, LogIn, UserPlus, LogOut, KeyRound, Server, CheckCircle2, AlertCircle } from "lucide-react";
+import {
+  X,
+  LogIn,
+  UserPlus,
+  LogOut,
+  KeyRound,
+  Server,
+  CheckCircle2,
+  AlertCircle,
+} from "lucide-react";
 import { login, register, logout, changePassword } from "../../api/authApi";
 import { getApiBaseUrl, setApiBaseUrl } from "../../api/client";
 
-export function AuthModal({ isOpen, onClose, currentUser, onUserAuthenticated, onUserLoggedOut }) {
+export function AuthModal({
+  isOpen,
+  onClose,
+  currentUser,
+  onUserAuthenticated,
+  onUserLoggedOut,
+}) {
   const [mode, setMode] = useState("login"); // 'login' | 'register' | 'profile'
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -87,7 +102,11 @@ export function AuthModal({ isOpen, onClose, currentUser, onUserAuthenticated, o
       <div style={styles.modal}>
         <div style={styles.header}>
           <h3 style={{ margin: 0, fontSize: 18, color: "#111827" }}>
-            {currentUser ? "Обліковий запис" : mode === "login" ? "Вхід у систему" : "Реєстрація"}
+            {currentUser
+              ? "Обліковий запис"
+              : mode === "login"
+                ? "Вхід у систему"
+                : "Реєстрація"}
           </h3>
           <button onClick={onClose} style={styles.closeBtn}>
             <X size={20} />
@@ -111,7 +130,9 @@ export function AuthModal({ isOpen, onClose, currentUser, onUserAuthenticated, o
         {currentUser ? (
           <div>
             <div style={styles.profileBox}>
-              <div style={{ fontSize: 13, color: "#6b7280" }}>Поточний користувач:</div>
+              <div style={{ fontSize: 13, color: "#6b7280" }}>
+                Поточний користувач:
+              </div>
               <div style={{ fontSize: 18, fontWeight: 700, color: "#166534" }}>
                 {currentUser.username}
               </div>
@@ -123,7 +144,10 @@ export function AuthModal({ isOpen, onClose, currentUser, onUserAuthenticated, o
             {/* Change Password Form */}
             <form onSubmit={handleChangePassword} style={{ marginBottom: 16 }}>
               <label style={styles.label}>
-                <KeyRound size={13} style={{ verticalAlign: "middle", marginRight: 4 }} />
+                <KeyRound
+                  size={13}
+                  style={{ verticalAlign: "middle", marginRight: 4 }}
+                />
                 Зміна пароля:
               </label>
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
@@ -143,7 +167,11 @@ export function AuthModal({ isOpen, onClose, currentUser, onUserAuthenticated, o
                   onChange={(e) => setNewPassword(e.target.value)}
                   style={styles.input}
                 />
-                <button type="submit" disabled={loading} style={styles.btnSecondaryAction}>
+                <button
+                  type="submit"
+                  disabled={loading}
+                  style={styles.btnSecondaryAction}
+                >
                   Змінити пароль
                 </button>
               </div>
@@ -152,7 +180,10 @@ export function AuthModal({ isOpen, onClose, currentUser, onUserAuthenticated, o
             {/* API Endpoint Config */}
             <form onSubmit={handleSaveApiUrl} style={{ marginBottom: 16 }}>
               <label style={styles.label}>
-                <Server size={13} style={{ verticalAlign: "middle", marginRight: 4 }} />
+                <Server
+                  size={13}
+                  style={{ verticalAlign: "middle", marginRight: 4 }}
+                />
                 Адреса бекенду (API Endpoint):
               </label>
               <div style={{ display: "flex", gap: 6 }}>
@@ -176,7 +207,10 @@ export function AuthModal({ isOpen, onClose, currentUser, onUserAuthenticated, o
             <div style={styles.tabGroup}>
               <button
                 type="button"
-                onClick={() => { setMode("login"); setError(null); }}
+                onClick={() => {
+                  setMode("login");
+                  setError(null);
+                }}
                 style={{
                   ...styles.tabBtn,
                   borderBottom: mode === "login" ? "2px solid #166534" : "none",
@@ -188,10 +222,14 @@ export function AuthModal({ isOpen, onClose, currentUser, onUserAuthenticated, o
               </button>
               <button
                 type="button"
-                onClick={() => { setMode("register"); setError(null); }}
+                onClick={() => {
+                  setMode("register");
+                  setError(null);
+                }}
                 style={{
                   ...styles.tabBtn,
-                  borderBottom: mode === "register" ? "2px solid #166534" : "none",
+                  borderBottom:
+                    mode === "register" ? "2px solid #166534" : "none",
                   fontWeight: mode === "register" ? 700 : 400,
                   color: mode === "register" ? "#166534" : "#6b7280",
                 }}
@@ -225,29 +263,14 @@ export function AuthModal({ isOpen, onClose, currentUser, onUserAuthenticated, o
               </div>
 
               <button type="submit" disabled={loading} style={styles.btnSubmit}>
-                {mode === "login" ? <LogIn size={16} /> : <UserPlus size={16} />}
+                {mode === "login" ? (
+                  <LogIn size={16} />
+                ) : (
+                  <UserPlus size={16} />
+                )}
                 {mode === "login" ? "Увійти" : "Зареєструватися"}
               </button>
             </form>
-
-            {/* Quick config for Backend URL */}
-            <div style={{ marginTop: 16, paddingTop: 12, borderTop: "1px solid #f3f4f6" }}>
-              <label style={styles.label}>Сервер бекенду:</label>
-              <div style={{ display: "flex", gap: 6 }}>
-                <input
-                  value={apiUrl}
-                  onChange={(e) => setApiUrl(e.target.value)}
-                  style={{ ...styles.input, fontSize: 12 }}
-                />
-                <button
-                  type="button"
-                  onClick={() => setApiBaseUrl(apiUrl)}
-                  style={{ ...styles.btnSecondaryAction, fontSize: 11 }}
-                >
-                  OK
-                </button>
-              </div>
-            </div>
           </div>
         )}
       </div>

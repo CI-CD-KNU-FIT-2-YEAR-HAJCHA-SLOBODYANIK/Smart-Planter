@@ -66,17 +66,9 @@ export function AddPlantModal({ isOpen, onClose, onCreate }) {
             <X size={20} />
           </button>
         </div>
+
         <div style={{ marginBottom: 14 }}>
-          <label
-            style={{
-              fontSize: 12,
-              color: "#6b7280",
-              display: "block",
-              marginBottom: 4,
-            }}
-          >
-            Швидкий шаблон:
-          </label>
+          <label style={styles.label}>Швидкий шаблон:</label>
           <div style={{ display: "flex", gap: 6 }}>
             {Object.entries(PRESETS).map(([key, p]) => (
               <button
@@ -97,69 +89,107 @@ export function AddPlantModal({ isOpen, onClose, onCreate }) {
             ))}
           </div>
         </div>
+
         <form onSubmit={handleSubmit} style={styles.form}>
-          <input
-            placeholder="Назва рослини (напр. Монстера)"
-            required
-            style={styles.input}
-            value={formData.name}
-            onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-          />
-          <input
-            placeholder="Вид / сорт"
-            style={styles.input}
-            value={formData.species}
-            onChange={(e) =>
-              setFormData({ ...formData, species: e.target.value })
-            }
-          />
-          <div style={styles.row}>
+          <div>
+            <label style={styles.label}>Назва рослини</label>
             <input
-              type="number"
-              placeholder="Min Вологість %"
+              placeholder="напр. Монстера"
+              required
               style={styles.input}
-              value={formData.minMoisture}
+              value={formData.name}
               onChange={(e) =>
-                setFormData({ ...formData, minMoisture: e.target.value })
-              }
-            />
-            <input
-              type="number"
-              placeholder="Max Вологість %"
-              style={styles.input}
-              value={formData.maxMoisture}
-              onChange={(e) =>
-                setFormData({ ...formData, maxMoisture: e.target.value })
-              }
-            />
-            <input
-              type="number"
-              placeholder="Min Темп °C"
-              style={styles.input}
-              value={formData.minTemp}
-              onChange={(e) =>
-                setFormData({ ...formData, minTemp: e.target.value })
-              }
-            />
-            <input
-              type="number"
-              placeholder="Max Темп °C"
-              style={styles.input}
-              value={formData.maxTemp}
-              onChange={(e) =>
-                setFormData({ ...formData, maxTemp: e.target.value })
+                setFormData({ ...formData, name: e.target.value })
               }
             />
           </div>
-          <input
-            type="number"
-            placeholder="Мінімальне світло (Lux)"
-            style={styles.input}
-            value={formData.minLight}
-            onChange={(e) =>
-              setFormData({ ...formData, minLight: e.target.value })
-            }
-          />
+
+          <div>
+            <label style={styles.label}>Вид / сорт</label>
+            <input
+              placeholder="напр. Deliciosa"
+              style={styles.input}
+              value={formData.species}
+              onChange={(e) =>
+                setFormData({ ...formData, species: e.target.value })
+              }
+            />
+          </div>
+
+          {/* Вологість з окремими підписами Мін/Макс */}
+          <div>
+            <label style={styles.label}>Вологість ґрунту (%)</label>
+            <div style={styles.row}>
+              <div>
+                <span style={styles.subLabel}>Мінімум (%)</span>
+                <input
+                  type="number"
+                  placeholder="30"
+                  style={styles.input}
+                  value={formData.minMoisture}
+                  onChange={(e) =>
+                    setFormData({ ...formData, minMoisture: e.target.value })
+                  }
+                />
+              </div>
+              <div>
+                <span style={styles.subLabel}>Максимум (%)</span>
+                <input
+                  type="number"
+                  placeholder="70"
+                  style={styles.input}
+                  value={formData.maxMoisture}
+                  onChange={(e) =>
+                    setFormData({ ...formData, maxMoisture: e.target.value })
+                  }
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Температура з окремими підписами Мін/Макс */}
+          <div>
+            <label style={styles.label}>Температура (°C)</label>
+            <div style={styles.row}>
+              <div>
+                <span style={styles.subLabel}>Мінімум (°C)</span>
+                <input
+                  type="number"
+                  placeholder="18"
+                  style={styles.input}
+                  value={formData.minTemp}
+                  onChange={(e) =>
+                    setFormData({ ...formData, minTemp: e.target.value })
+                  }
+                />
+              </div>
+              <div>
+                <span style={styles.subLabel}>Максимум (°C)</span>
+                <input
+                  type="number"
+                  placeholder="28"
+                  style={styles.input}
+                  value={formData.maxTemp}
+                  onChange={(e) =>
+                    setFormData({ ...formData, maxTemp: e.target.value })
+                  }
+                />
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <label style={styles.label}>Мінімальне освітлення (Lux)</label>
+            <input
+              type="number"
+              placeholder="300"
+              style={styles.input}
+              value={formData.minLight}
+              onChange={(e) =>
+                setFormData({ ...formData, minLight: e.target.value })
+              }
+            />
+          </div>
 
           <button type="submit" style={styles.submitBtn}>
             Зберегти в базу
@@ -189,6 +219,8 @@ const styles = {
     width: "100%",
     maxWidth: 400,
     boxSizing: "border-box",
+    maxHeight: "90vh",
+    overflowY: "auto",
   },
   modalHeader: {
     display: "flex",
@@ -200,6 +232,20 @@ const styles = {
     border: "none",
     background: "none",
     cursor: "pointer",
+  },
+  label: {
+    fontSize: 13,
+    color: "#1f2937",
+    fontWeight: 600,
+    display: "block",
+    marginBottom: 4,
+  },
+  subLabel: {
+    fontSize: 11,
+    color: "#6b7280",
+    fontWeight: 500,
+    display: "block",
+    marginBottom: 2,
   },
   form: {
     display: "flex",

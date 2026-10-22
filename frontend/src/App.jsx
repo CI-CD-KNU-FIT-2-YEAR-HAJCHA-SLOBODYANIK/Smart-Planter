@@ -379,7 +379,7 @@ export default function App() {
                   fontSize: 13,
                 }}
               >
-                💧 Полити рослину
+                💧 Зафіксувати полив
               </button>
             </div>
           </div>

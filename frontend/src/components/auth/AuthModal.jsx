@@ -5,12 +5,10 @@ import {
   UserPlus,
   LogOut,
   KeyRound,
-  Server,
   CheckCircle2,
   AlertCircle,
 } from "lucide-react";
 import { login, register, logout, changePassword } from "../../api/authApi";
-import { getApiBaseUrl, setApiBaseUrl } from "../../api/client";
 
 export function AuthModal({
   isOpen,
@@ -24,7 +22,6 @@ export function AuthModal({
   const [password, setPassword] = useState("");
   const [oldPassword, setOldPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
-  const [apiUrl, setApiUrl] = useState(getApiBaseUrl());
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
@@ -88,13 +85,6 @@ export function AuthModal({
       onUserLoggedOut();
     }
     onClose();
-  };
-
-  const handleSaveApiUrl = (e) => {
-    e.preventDefault();
-    setApiBaseUrl(apiUrl);
-    setSuccess("Адресу API оновлено!");
-    setTimeout(() => setSuccess(null), 2000);
   };
 
   return (
@@ -173,27 +163,6 @@ export function AuthModal({
                   style={styles.btnSecondaryAction}
                 >
                   Змінити пароль
-                </button>
-              </div>
-            </form>
-
-            {/* API Endpoint Config */}
-            <form onSubmit={handleSaveApiUrl} style={{ marginBottom: 16 }}>
-              <label style={styles.label}>
-                <Server
-                  size={13}
-                  style={{ verticalAlign: "middle", marginRight: 4 }}
-                />
-                Адреса бекенду (API Endpoint):
-              </label>
-              <div style={{ display: "flex", gap: 6 }}>
-                <input
-                  value={apiUrl}
-                  onChange={(e) => setApiUrl(e.target.value)}
-                  style={styles.input}
-                />
-                <button type="submit" style={styles.btnSecondaryAction}>
-                  Зберегти
                 </button>
               </div>
             </form>

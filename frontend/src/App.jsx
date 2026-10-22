@@ -38,6 +38,7 @@ export default function App() {
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [isSimulatorModalOpen, setIsSimulatorModalOpen] = useState(false);
   const [isCopied, setIsCopied] = useState(false);
+  const [isWateringPending, setIsWateringPending] = useState(false);
   const [loading, setLoading] = useState(true);
   const [connectionStatus, setConnectionStatus] = useState("disconnected");
   const [currentUser, setCurrentUser] = useState(getStoredUser());
@@ -116,14 +117,8 @@ export default function App() {
       },
       onWatering: (wateringEvent) => {
         if (wateringEvent.plantId === selectedPlantIdRef.current) {
-          setHistory((prev) => {
-            if (!prev.length) return prev;
-            const updated = [{ ...prev[0], moisture: 85.0 }, ...prev.slice(1)];
-            localStorage.setItem("cached_history", JSON.stringify(updated));
-            return updated;
-          });
+          loadTelemetry(selectedPlantIdRef.current);
         }
-        // Also refresh alerts because watering auto-resolves LowMoisture
         fetchActiveAlerts()
           .then(setAlerts)
           .catch(() => {});
@@ -132,7 +127,7 @@ export default function App() {
         setConnectionStatus(status);
       },
     });
-  }, []);
+  }, [loadTelemetry]);
 
   useEffect(() => {
     loadBaseData();
@@ -229,15 +224,18 @@ export default function App() {
 
   const handleWater = async (plantId) => {
     try {
-      setHistory((prev) => {
-        if (!prev.length) return prev;
-        return [{ ...prev[0], moisture: 85.0 }, ...prev.slice(1)];
-      });
+      setIsWateringPending(true);
       await waterPlant(plantId);
-      // Refresh active alerts as backend resolves LowMoisture alert on water
+
+      // Одразу підтягуємо актуальну телеметрію після фіксації на бекенді
+      await loadTelemetry(plantId);
+
       const updatedAlerts = await fetchActiveAlerts();
       setAlerts(updatedAlerts);
+
+      setTimeout(() => setIsWateringPending(false), 3000);
     } catch (err) {
+      setIsWateringPending(false);
       console.warn("Помилка поливу:", err);
       alert(`Помилка поливу: ${err.message}`);
     }
@@ -365,22 +363,26 @@ export default function App() {
 
               <button
                 onClick={() => handleWater(selectedPlantId)}
+                disabled={isWateringPending}
                 style={{
                   padding: "8px 16px",
-                  backgroundColor: "#0284c7",
+                  backgroundColor: isWateringPending ? "#0369a1" : "#0284c7",
                   color: "#fff",
                   border: "none",
                   borderRadius: 8,
-                  cursor: "pointer",
+                  cursor: isWateringPending ? "default" : "pointer",
                   fontWeight: 600,
                   display: "inline-flex",
                   alignItems: "center",
                   gap: 6,
                   boxShadow: "0 1px 2px rgba(2, 132, 199, 0.3)",
                   fontSize: 13,
+                  transition: "all 0.2s ease",
                 }}
               >
-                💧 Зафіксувати полив
+                {isWateringPending
+                  ? "💧 Полив зафіксовано..."
+                  : "💧 Зафіксувати полив"}
               </button>
             </div>
           </div>
@@ -446,7 +448,7 @@ export default function App() {
                   transition: "all 0.2s ease",
                 }}
               >
-                {isCopied ? "✓ Скопійовано!" : "Скопійовати ключ"}
+                {isCopied ? "✓ Скопійовано!" : "Скопіювати ключ"}
               </button>
             </div>
           )}

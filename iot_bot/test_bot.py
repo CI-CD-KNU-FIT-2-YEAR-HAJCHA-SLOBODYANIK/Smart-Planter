@@ -1,6 +1,6 @@
 import pytest
 from unittest.mock import patch
-from main_5 import (
+from main import (
     get_user_state,
     init_backend_for_user,
     get_auth_data,

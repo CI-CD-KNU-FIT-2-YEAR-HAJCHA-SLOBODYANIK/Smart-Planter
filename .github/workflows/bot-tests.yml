@@ -26,6 +26,8 @@ jobs:
         if [ -f iot_bot/requirements.txt ]; then pip install -r iot_bot/requirements.txt; fi
 
     - name: Run Pytest
+      env:
+        TELEGRAM_BOT_TOKEN: "123456789:ABCdefGhIJKlmNoPQRsTUVwxyZ"
       run: |
         cd iot_bot
         pytest test_bot.py -v

@@ -14,7 +14,7 @@
 
 1. **Клонування репозиторію:**
 
-   git clone https://github.com/CI-CD-KNU-FIT-2-YEAR-HAJCHA-SLOBODYANIK/Smart-Planter.git smart-planter
+   git clone https://github.com/CI-CD-KNU-FIT-2-YEAR-HAJCHA-SLOBODYANIK/Smart-Planter.git
    cd smart-planter
 
 2. **Запуск сервісів у Docker (Backend + PostgreSQL + Telegram Bot):**

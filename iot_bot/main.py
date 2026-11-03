@@ -12,29 +12,27 @@ from aiogram.exceptions import TelegramBadRequest
 BACKEND_API_URL = os.getenv("BACKEND_API_URL", "http://backend:8080/api/v1").rstrip('/')
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 
+# --- Константи інтервалів та налаштувань ---
+DEFAULT_PASSWORD = "bot_secure_password_123"
+STATUS_REFRESH_INTERVAL = 12
+ALERTS_CHECK_INTERVAL = 15
+TELEMETRY_INTERVAL = 10
+
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
 # Сховище станів для кожного користувача окремо за його Telegram ID
-#/* необходимость этого массива вызывает у меня сомнения.
-#   зачем оно надо кроме как чисто для бота данные (например флаг обновления)?
-#*/ большинство полей просто 24/7 перезаписываются с бекенда
 users_state = {}
 
 def get_user_state(user_id: int):
     if user_id not in users_state:
         users_state[user_id] = {
             "jwt_token": None,
-            "plants": [],  #// (тут уже есть мин макс темп и другое)
+            "plants": [],
             "active_plant_id": None,
             "device_key": None,
             "target_chat_id": None,
             "status_message_id": None,
-            "min_moisture": 30.0, #// это ж вообще в растениях находиться, зачем тут эти поля
-            "max_moisture": 80.0,
-            "min_temp": 18.0,
-            "max_temp": 30.0,
-            "min_light": 300.0,
             "sent_alert_ids": set(),
             "sim_moistures": {},
             "is_viewing_status": False  # Прапорець для контролю автооновлення статусу
@@ -50,10 +48,18 @@ class PlantCreationStates(StatesGroup):
     waiting_for_max_temp = State()
     waiting_for_min_light = State()
 
+def get_auth_data(telegram_id: int):
+    """Дотримання принципу DRY: єдине місце формування облікових даних користувача"""
+    return {
+        "username": f"tg_user_{telegram_id}",
+        "password": DEFAULT_PASSWORD
+    }
+
 def init_backend_for_user(telegram_id: int):
     user_state = get_user_state(telegram_id)
-    username = f"tg_user_{telegram_id}"  #//dry не нарушай 0. пароль тоже
-    auth_data = {"username": username, "password": "bot_secure_password_123"}
+    auth_data = get_auth_data(telegram_id)
+    username = auth_data["username"]
+
     try:
         print(f"Спроба авторизації користувача {username} на бекенді...")
         resp = requests.post(f"{BACKEND_API_URL}/users/login", json=auth_data)
@@ -82,6 +88,39 @@ def get_inline_status_keyboard():
         ]
     ])
 
+def get_plants_keyboard(plants: list, active_plant_id: int, include_back: bool = False):
+    """DRY виправлення №1: єдина генерація клавіатури зі списком рослин та кнопками видалення"""
+    keyboard_buttons = []
+    for p in plants:
+        is_active = "🟢 " if p["id"] == active_plant_id else ""
+        keyboard_buttons.append([
+            InlineKeyboardButton(
+                text=f"{is_active}{p['name']} ({p['species']})",
+                callback_data=f"select_plant_{p['id']}"
+            ),
+            InlineKeyboardButton(
+                text="🗑",
+                callback_data=f"delete_prompt_{p['id']}"
+            )
+        ])
+    if include_back:
+        keyboard_buttons.append([
+            InlineKeyboardButton(text="⬅️ Назад до статусу", callback_data="refresh_status")
+        ])
+    return InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
+
+def format_status_message(plant_name: str, species: str, latest: dict) -> str:
+    """DRY виправлення №2: єдиний шаблон формування тексту статусної панелі"""
+    species_str = f" ({species})" if species else ""
+    return (
+        f"📊 <b>ПАНЕЛЬ МОНІТОРИНГУ РОСЛИНИ (Live)</b>\n\n"
+        f"🌱 Вазон: <b>{plant_name}{species_str}</b>\n"
+        f"💧 Вологість ґрунту: <b>{latest.get('moisture')}%</b>\n"
+        f"🌡 Температура: <b>{latest.get('temperature')}°C</b>\n"
+        f"☀️ Освітленість: <b>{latest.get('light')} lux</b>\n\n"
+        f"<i>🔄 Дані оновлюються автоматично в реальному часі.</i>"
+    )
+
 @dp.message(CommandStart())
 async def cmd_start(message: Message, state: FSMContext):
     user_id = message.from_user.id
@@ -93,7 +132,7 @@ async def cmd_start(message: Message, state: FSMContext):
     if user_state["jwt_token"]:
         headers = {"Authorization": f"Bearer {user_state['jwt_token']}"}
         try:
-            resp = requests.get(f"{BACKEND_API_URL}/plants", headers=headers)   #// вроде как вместо этих синхронных можно асинхронные. post тоже
+            resp = requests.get(f"{BACKEND_API_URL}/plants", headers=headers)
             if resp.status_code == 200:
                 plants = resp.json()
                 user_state["plants"] = plants
@@ -101,11 +140,6 @@ async def cmd_start(message: Message, state: FSMContext):
                     active = plants[0]
                     user_state["active_plant_id"] = active.get("id")
                     user_state["device_key"] = active.get("apiKey")
-                    user_state["min_moisture"] = active.get("minMoisture", 30.0)
-                    user_state["max_moisture"] = active.get("maxMoisture", 80.0)
-                    user_state["min_temp"] = active.get("minTemp", 18.0)
-                    user_state["max_temp"] = active.get("maxTemp", 30.0)
-                    user_state["min_light"] = active.get("minLight", 300.0)
         except Exception:
             pass
 
@@ -141,13 +175,12 @@ async def cmd_new_plant(message: Message, state: FSMContext):
 @dp.message(Command("credentials"))
 async def cmd_credentials(message: Message):
     user_id = message.from_user.id
-    username = f"tg_user_{user_id}"  #//dry не нарушай 0. пароль тоже
-    password = "bot_secure_password_123"
+    auth_data = get_auth_data(user_id)
 
     await message.answer(
         f"🔑 **Ваші дані для авторизації у Swagger / Frontend:**\n\n"
-        f"👤 Username: <code>{username}</code>\n"
-        f"🔒 Password: <code>{password}</code>\n\n"
+        f"👤 Username: <code>{auth_data['username']}</code>\n"
+        f"🔒 Password: <code>{auth_data['password']}</code>\n\n"
         f"<i>Використайте ці дані у ручці `/api/v1/users/login` у Swagger, щоб отримати JWT-токен для перегляду графіків чи тестування API!</i>",
         parse_mode="HTML"
     )
@@ -230,10 +263,10 @@ async def process_min_light(message: Message, state: FSMContext):
     plant_data = {
         "name": data.get("plant_name"),
         "species": data.get("plant_species"),
-        "minMoisture": data.get("min_moisture"),
-        "maxMoisture": data.get("max_moisture"),
-        "minTemp": data.get("min_temp"),
-        "maxTemp": data.get("max_temp"),
+        "minMoisture": data.get("min_moisture", 30.0),
+        "maxMoisture": data.get("max_moisture", 80.0),
+        "minTemp": data.get("min_temp", 18.0),
+        "maxTemp": data.get("max_temp", 30.0),
         "minLight": min_l
     }
 
@@ -245,12 +278,6 @@ async def process_min_light(message: Message, state: FSMContext):
 
             user_state["active_plant_id"] = plant_id
             user_state["device_key"] = created.get("apiKey")
-            user_state["min_moisture"] = data.get("min_moisture")
-            user_state["max_moisture"] = data.get("max_moisture")
-            user_state["min_temp"] = data.get("min_temp")
-            user_state["max_temp"] = data.get("max_temp")
-            user_state["min_light"] = min_l
-
             user_state["sim_moistures"][plant_id] = 85.0
 
             all_plants_resp = requests.get(f"{BACKEND_API_URL}/plants", headers=headers)
@@ -269,12 +296,12 @@ async def process_min_light(message: Message, state: FSMContext):
             )
             await send_or_update_pinned_status(message)
         else:
-            await message.answer(f"⚠️ Помилка створення рослини на серверах бекенда: {resp.status_code}")
+            await message.answer(f"⚠️ Помилка створення рослини на бекенді: {resp.status_code}")
     except Exception as e:
         await message.answer(f"❌ Помилка мережі при створенні рослини: {e}")
 
 # --- Меню вибору та видалення рослин (/myplants) ---
-@dp.message(Command("myplants")) #// лучше минимизировать вред от нарушения dry здесь 1
+@dp.message(Command("myplants"))
 async def cmd_my_plants(message: Message):
     user_id = message.from_user.id
     user_state = get_user_state(user_id)
@@ -293,23 +320,10 @@ async def cmd_my_plants(message: Message):
         await message.answer("У вас ще немає рослин. Додайте першу через /newplant")
         return
 
-    keyboard_buttons = []
-    for p in plants:
-        is_active = "🟢 " if p["id"] == user_state["active_plant_id"] else ""
-        keyboard_buttons.append([
-            InlineKeyboardButton(
-                text=f"{is_active}{p['name']} ({p['species']})",
-                callback_data=f"select_plant_{p['id']}"
-            ),
-            InlineKeyboardButton(
-                text="🗑",
-                callback_data=f"delete_prompt_{p['id']}"
-            )
-        ])
+    keyboard = get_plants_keyboard(plants, user_state["active_plant_id"], include_back=False)
+    await message.answer("🌱 **Ваші рослини:**\nОберіть активну для керування або видаліть зайву:", reply_markup=keyboard, parse_mode="HTML")
 
-    await message.answer("🌱 **Ваші рослини:**\nОберіть активну для керування або видаліть зайву:", reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard_buttons), parse_mode="HTML")
-
-@dp.callback_query(F.data == "show_my_plants") #// лучше минимизировать вред от нарушения dry здесь 1
+@dp.callback_query(F.data == "show_my_plants")
 async def callback_show_my_plants(callback: CallbackQuery):
     user_id = callback.from_user.id
     user_state = get_user_state(user_id)
@@ -328,29 +342,12 @@ async def callback_show_my_plants(callback: CallbackQuery):
         await callback.answer("У вас ще немає рослин. Додайте першу через /newplant", show_alert=True)
         return
 
-    keyboard_buttons = []
-    for p in plants:
-        is_active = "🟢 " if p["id"] == user_state["active_plant_id"] else ""
-        keyboard_buttons.append([
-            InlineKeyboardButton(
-                text=f"{is_active}{p['name']} ({p['species']})",
-                callback_data=f"select_plant_{p['id']}"
-            ),
-            InlineKeyboardButton(
-                text="🗑",
-                callback_data=f"delete_prompt_{p['id']}"
-            )
-        ])
-
-    keyboard_buttons.append([
-        InlineKeyboardButton(text="⬅️ Назад до статусу", callback_data="refresh_status")
-    ])
-
+    keyboard = get_plants_keyboard(plants, user_state["active_plant_id"], include_back=True)
     await callback.answer()
     try:
         await callback.message.edit_text(
             "🌱 **Ваші рослини:**\nОберіть активну для керування або видаліть зайву:",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard_buttons),
+            reply_markup=keyboard,
             parse_mode="HTML"
         )
         user_state["status_message_id"] = callback.message.message_id
@@ -368,11 +365,6 @@ async def callback_select_plant(callback: CallbackQuery):
     if selected_plant:
         user_state["active_plant_id"] = selected_plant["id"]
         user_state["device_key"] = selected_plant.get("apiKey")
-        user_state["min_moisture"] = selected_plant.get("minMoisture", 30.0)
-        user_state["max_moisture"] = selected_plant.get("maxMoisture", 80.0)
-        user_state["min_temp"] = selected_plant.get("minTemp", 18.0)
-        user_state["max_temp"] = selected_plant.get("maxTemp", 30.0)
-        user_state["min_light"] = selected_plant.get("minLight", 300.0)
 
         await callback.answer(f"Вибрано: {selected_plant['name']}")
         await send_or_update_pinned_status(callback, is_callback=True)
@@ -452,8 +444,7 @@ async def callback_resolve_alert(callback: CallbackQuery):
         if resp.status_code in [200, 204]:
             await callback.answer("✅ Тривогу успішно закрито!", show_alert=True)
             try:
-                # Видаляємо повідомлення з тривогою, щоб не засмічувати чат
-                await callback.message.delete()   #// точно ли нужно удалять?
+                await callback.message.delete()
             except TelegramBadRequest:
                 pass
         else:
@@ -489,15 +480,7 @@ async def send_or_update_pinned_status(message_or_callback: Message | CallbackQu
             data = response.json()
             if data and len(data) > 0:
                 latest = data[0]
-                species_str = f" ({active_plant_species})" if active_plant_species else ""
-                msg = (
-                    f"📊 <b>ПАНЕЛЬ МОНІТОРИНГУ РОСЛИНИ (Live)</b>\n\n" #// лучше минимизировать вред от нарушения dry здесь 2
-                    f"🌱 Вазон: <b>{active_plant_name}{species_str}</b>\n"
-                    f"💧 Вологість ґрунту: <b>{latest.get('moisture')}%</b>\n"
-                    f"🌡 Температура: <b>{latest.get('temperature')}°C</b>\n"
-                    f"☀️ Освітленість: <b>{latest.get('light')} lux</b>\n\n"
-                    f"<i>🔄 Дані оновлюються автоматично в реальному часі.</i>"
-                )
+                msg = format_status_message(active_plant_name, active_plant_species, latest)
 
                 if is_callback:
                     try:
@@ -587,7 +570,7 @@ async def callback_water(callback: CallbackQuery):
 
 async def auto_refresh_status_loop():
     while True:
-        await asyncio.sleep(12)  #// её б подробнее как константу
+        await asyncio.sleep(STATUS_REFRESH_INTERVAL)
         for user_id, user_state in users_state.items():
             if user_state["jwt_token"] and user_state["active_plant_id"] and user_state["target_chat_id"] and user_state["status_message_id"] and user_state.get("is_viewing_status"):
                 history_url = f"{BACKEND_API_URL}/telemetry/{user_state['active_plant_id']}/history?limit=1"
@@ -606,16 +589,8 @@ async def auto_refresh_status_loop():
                                     active_plant_name = p.get("name", "Вазон")
                                     active_plant_species = p.get("species", "")
                                     break
-                            species_str = f" ({active_plant_species})" if active_plant_species else ""
 
-                            msg = (
-                                f"📊 <b>ПАНЕЛЬ МОНІТОРИНГУ РОСЛИНИ (Live)</b>\n\n" #// лучше минимизировать вред от нарушения dry здесь 2
-                                f"🌱 Вазон: <b>{active_plant_name}{species_str}</b>\n"
-                                f"💧 Вологість ґрунту: <b>{latest.get('moisture')}%</b>\n"
-                                f"🌡 Температура: <b>{latest.get('temperature')}°C</b>\n"
-                                f"☀️ Освітленість: <b>{latest.get('light')} lux</b>\n\n"
-                                f"<i>🔄 Дані оновлюються автоматично в реальному часі.</i>"
-                            )
+                            msg = format_status_message(active_plant_name, active_plant_species, latest)
                             await bot.edit_message_text(
                                 chat_id=user_state["target_chat_id"],
                                 message_id=user_state["status_message_id"],
@@ -626,9 +601,9 @@ async def auto_refresh_status_loop():
                 except Exception:
                     pass
 
-async def check_alerts_loop(): #// настроить WebSockets надо, а не спамить зачем то
+async def check_alerts_loop():
     while True:
-        await asyncio.sleep(15)
+        await asyncio.sleep(ALERTS_CHECK_INTERVAL)
         for user_id, user_state in users_state.items():
             if user_state["jwt_token"] and user_state["target_chat_id"]:
                 try:
@@ -704,7 +679,7 @@ async def check_alerts_loop(): #// настроить WebSockets надо, а н
                     pass
 
 async def generate_telemetry():
-    """Симулює телеметрію з урахуванням зміни дня/ночі та сезонів (Норма -> Літо -> Зима)""" #// а зачем нам сезоны и время вообще мы только показать протестировать
+    """Симулює телеметрію з урахуванням зміни дня/ночі та сезонів (Норма -> Літо -> Зима)"""
     await asyncio.sleep(5)
     counter = 0
     while True:
@@ -765,7 +740,7 @@ async def generate_telemetry():
                 except Exception:
                     pass
 
-        await asyncio.sleep(10)
+        await asyncio.sleep(TELEMETRY_INTERVAL)
 
 async def main():
     if not BOT_TOKEN:
@@ -785,7 +760,7 @@ async def main():
     asyncio.create_task(generate_telemetry())
     asyncio.create_task(check_alerts_loop())
     asyncio.create_task(auto_refresh_status_loop())
-    print("Бот успішно запущено з функцією видалення повідомлень після закриття тривоги!")
+    print("Бот успішно запущено після рефакторингу зауважень!")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":

@@ -1,9 +1,19 @@
-﻿using System.Security.Claims;
+﻿using System.IdentityModel.Tokens.Jwt;
+using System.Net;
+using System.Net.Http.Headers;
+using System.Security.Claims;
+using System.Text;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.SignalR;
+using Microsoft.AspNetCore.SignalR.Client;
+using Microsoft.AspNetCore.TestHost;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.IdentityModel.Tokens;
 using Moq;
 using SmartPlanter.Api.Controllers;
 using SmartPlanter.Api.Data;
@@ -15,21 +25,22 @@ using Xunit.Abstractions;
 
 namespace SmartPlanter.Tests;
 
-public class BackendTests
+public class BackendTests : IClassFixture<WebApplicationFactory<Program>>
 {
     private readonly ITestOutputHelper _output;
     private readonly int _seed;
     private readonly Random _random;
     private readonly IConfiguration _configuration;
+    private readonly WebApplicationFactory<Program> _factory;
 
-    public BackendTests(ITestOutputHelper output)
+    public BackendTests(ITestOutputHelper output, WebApplicationFactory<Program> factory)
     {
         _output = output;
+        _factory = factory;
         _seed = Environment.TickCount;
         _random = new Random(_seed);
         _output.WriteLine($"Seed: {_seed}");
 
-        // Инициализация конфигурации в памяти для эмитации appsettings.json (нужна для сборки и проверки JWT)
         var configValues = new Dictionary<string, string?>
         {
             { "Jwt:Key", "SmartPlanter_Secret_Key_For_Jwt_Token_Auth_2026_Secure_Key!" },
@@ -43,7 +54,7 @@ public class BackendTests
     }
 
     /// <summary>
-    /// Создает изолированное тестовое окружение с In-Memory базой данных и заглушками для SignalR Hub.
+    /// Створює ізольоване тестове середовище з новою InMemory БД та моками для SignalR.
     /// </summary>
     private (AppDbContext Context, Mock<IClientProxy> MockUserProxy, Mock<IHubContext<TelemetryHub>> MockHubContext) CreateEnvironment()
     {
@@ -56,7 +67,6 @@ public class BackendTests
         var mockHubClients = new Mock<IHubClients>();
         var mockUserProxy = new Mock<IClientProxy>();
 
-        // Настройка мока: при пересылке адресных сообщений конкретному UserId возвращаем MockUserProxy
         mockHubClients.Setup(c => c.User(It.IsAny<string>())).Returns(mockUserProxy.Object);
 
         var mockHubContext = new Mock<IHubContext<TelemetryHub>>();
@@ -66,7 +76,7 @@ public class BackendTests
     }
 
     /// <summary>
-    /// Устанавливает контекст авторизованного пользователя (Claims/JWT identity) в HttpContext контроллера.
+    /// Встановлює контекст автентифікованого користувача для контролера.
     /// </summary>
     private static void SetUserContext(ControllerBase controller, int userId, string username)
     {
@@ -78,29 +88,18 @@ public class BackendTests
         var identity = new ClaimsIdentity(claims, "TestAuth");
         var principal = new ClaimsPrincipal(identity);
 
-        if (controller.ControllerContext.HttpContext == null)
-        {
-            controller.ControllerContext = new ControllerContext
-            {
-                HttpContext = new DefaultHttpContext()
-            };
-        }
-
+        controller.ControllerContext ??= new ControllerContext();
+        controller.ControllerContext.HttpContext ??= new DefaultHttpContext();
         controller.ControllerContext.HttpContext.User = principal;
     }
 
     /// <summary>
-    /// Устанавливает или очищает заголовок 'X-Device-Key' в HTTP-запросе для аутентификации IoT-устройств.
+    /// Встановлює або видаляє заголовок API-ключа пристрою X-Device-Key в HttpContext контролера.
     /// </summary>
     private static void SetDeviceKeyHeader(ControllerBase controller, string? deviceKey)
     {
-        if (controller.ControllerContext.HttpContext == null)
-        {
-            controller.ControllerContext = new ControllerContext
-            {
-                HttpContext = new DefaultHttpContext()
-            };
-        }
+        controller.ControllerContext ??= new ControllerContext();
+        controller.ControllerContext.HttpContext ??= new DefaultHttpContext();
 
         if (!string.IsNullOrEmpty(deviceKey))
         {
@@ -113,7 +112,7 @@ public class BackendTests
     }
 
     /// <summary>
-    /// Вспомогательный метод создания растения напрямую в базе данных с привязкой к UserId.
+    /// Допоміжний метод для створення рослини у тестовій БД.
     /// </summary>
     private Plant CreatePlantForUser(AppDbContext context, int userId, string name = "Тестова рослина")
     {
@@ -134,26 +133,60 @@ public class BackendTests
         return plant;
     }
 
+    /// <summary>
+    /// Генерація тестового JWT-токена для перевірки авторизації.
+    /// </summary>
+    private string GenerateTestJwtToken(int userId, string username, bool isExpired = false, bool isTamperedKey = false)
+    {
+        var keyBytes = Encoding.UTF8.GetBytes(isTamperedKey
+            ? "WRONG_SECRET_KEY_FOR_TAMPERED_TOKEN_VERIFICATION_12345!"
+            : _configuration["Jwt:Key"]!);
+
+        var tokenHandler = new JwtSecurityTokenHandler();
+        var tokenDescriptor = new SecurityTokenDescriptor
+        {
+            Subject = new ClaimsIdentity(new[]
+            {
+                new Claim(ClaimTypes.NameIdentifier, userId.ToString()),
+                new Claim(ClaimTypes.Name, username)
+            }),
+            Expires = isExpired ? DateTime.UtcNow.AddHours(-2) : DateTime.UtcNow.AddHours(1),
+            Issuer = _configuration["Jwt:Issuer"],
+            Audience = _configuration["Jwt:Audience"],
+            SigningCredentials = new SigningCredentials(new SymmetricSecurityKey(keyBytes), SecurityAlgorithms.HmacSha256Signature)
+        };
+
+        var token = tokenHandler.CreateToken(tokenDescriptor);
+        return tokenHandler.WriteToken(token);
+    }
+
+    // =========================================================================
+    // ТЕСТИ ТЕЛЕМЕТРІЇ ТА АВТЕНТИФІКАЦІЇ ПРИСТРОЇВ
+    // =========================================================================
+
+    /// <summary>
+    /// Перевіряє автентифікацію пристрою за API-ключем (X-Device-Key).
+    /// Приймає запит із правильним ключем і відхиляє без нього або з невалідним ключем.
+    /// </summary>
     [Fact]
     public async Task Telemetry_DeviceApiKey_Authentication_AcceptsValidAndRejectsInvalid()
     {
-        // Проверка аутентификации IoT-датчиков: отклонение запросов без ключа или с неверным ключом, прием с валидным.
+        // Arrange: Створення середовища та рослини із згенерованим ApiKey
         var (context, _, mockHubContext) = CreateEnvironment();
         var telemetryController = new TelemetryController(context, mockHubContext.Object);
-
         var plant = CreatePlantForUser(context, userId: 1);
 
-        // 1. Попытка отправки без ключа в заголовке X-Device-Key -> ожидаем 401 Unauthorized
+        // Act & Assert 1: Запит без заголовка X-Device-Key -> 401 Unauthorized
         SetDeviceKeyHeader(telemetryController, null);
         var noKeyResult = await telemetryController.PostTelemetry(new TelemetryCreateDto(50, 22, 400));
         Assert.IsType<UnauthorizedObjectResult>(noKeyResult.Result);
 
-        // 2. Попытка отправки с невалидным ключом -> ожидаем 401 Unauthorized
+        // Act & Assert 2: Запит із некоректним API-ключем -> 401 Unauthorized
         SetDeviceKeyHeader(telemetryController, "invalid_device_key_123");
         var invalidKeyResult = await telemetryController.PostTelemetry(new TelemetryCreateDto(50, 22, 400));
         Assert.IsType<UnauthorizedObjectResult>(invalidKeyResult.Result);
 
-        // 3. Успешная отправка с валидным ключом ApiKey -> ожидаем 200 OK
+        // Act & Assert 3: Запит із правильним API-ключем пристрою -> 200 OK та збереження телеметрії
         SetDeviceKeyHeader(telemetryController, plant.ApiKey);
         var successResult = await telemetryController.PostTelemetry(new TelemetryCreateDto(50, 22, 400));
         var okResult = Assert.IsType<OkObjectResult>(successResult.Result);
@@ -163,72 +196,79 @@ public class BackendTests
         Assert.Equal(50, response.Moisture);
     }
 
+    /// <summary>
+    /// Перевіряє генерацію сповіщень (Alerts) для всіх типів відхилень
+    /// та захист від дублювання (дедуплікацію) активних сповіщень.
+    /// </summary>
     [Fact]
-    public async Task Plants_DataIsolation_UserCannotAccessOtherUsersPlants()
+    public async Task Telemetry_AlertGeneration_AllAlertTypesAndDeduplication()
     {
-        // Проверка изоляции данных: пользователь А не видит и не может полить растения пользователя Б.
+        // Arrange
         var (context, _, mockHubContext) = CreateEnvironment();
-        var plantsController = new PlantsController(context, mockHubContext.Object);
+        var telemetryController = new TelemetryController(context, mockHubContext.Object);
 
-        var plantUser1 = CreatePlantForUser(context, userId: 1, "Монстера Користувача 1");
-        var plantUser2 = CreatePlantForUser(context, userId: 2, "Фікус Користувача 2");
+        var plant = CreatePlantForUser(context, userId: 100);
+        SetDeviceKeyHeader(telemetryController, plant.ApiKey);
 
-        // Входим под пользователем 1
-        SetUserContext(plantsController, 1, "user_one");
+        // Act: Надсилання телеметрії з різними критичними показниками
+        await telemetryController.PostTelemetry(new TelemetryCreateDto(Moisture: 50, Temperature: 35, Light: 400)); // HighTemp
+        await telemetryController.PostTelemetry(new TelemetryCreateDto(Moisture: 50, Temperature: 22, Light: 100)); // LowLight
+        await telemetryController.PostTelemetry(new TelemetryCreateDto(Moisture: 85, Temperature: 22, Light: 400)); // HighMoisture
 
-        // Вызов GET /plants должен вернуть только растения пользователя 1
-        var result = await plantsController.GetAll();
+        // Assert: Перевірка створення 3 окремих сповіщень для кожного типу
+        var alerts = await context.Alerts.Where(a => a.PlantId == plant.Id).ToListAsync();
+        Assert.Equal(3, alerts.Count);
+        Assert.Contains(alerts, a => a.Type == AlertType.HighTemperature);
+        Assert.Contains(alerts, a => a.Type == AlertType.LowLight);
+        Assert.Contains(alerts, a => a.Type == AlertType.HighMoisture);
+
+        // Act: Повторне надсилання критичної температури (спам телеметрією)
+        await telemetryController.PostTelemetry(new TelemetryCreateDto(Moisture: 50, Temperature: 40, Light: 400));
+
+        // Assert: Повторне нерозв'язане сповіщення HighTemperature не створюється (дедуплікація)
+        var alertsAfterSpam = await context.Alerts
+            .Where(a => a.PlantId == plant.Id && a.Type == AlertType.HighTemperature && !a.IsResolved)
+            .ToListAsync();
+        Assert.Single(alertsAfterSpam);
+    }
+
+    /// <summary>
+    /// Перевіряє фільтрацію історії телеметрії за часовим інтервалом (кількістю днів)
+    /// та правильність сортування результатів за спаданням дати.
+    /// </summary>
+    [Fact]
+    public async Task Telemetry_HistoryFiltering_WorksWithDatesAndDays()
+    {
+        // Arrange
+        var (context, _, mockHubContext) = CreateEnvironment();
+        var telemetryController = new TelemetryController(context, mockHubContext.Object);
+
+        var plant = CreatePlantForUser(context, userId: 1);
+        SetUserContext(telemetryController, 1, "user_one");
+
+        // Додаємо записи: 10 днів тому, 2 дні тому та поточний момент
+        context.Telemetries.Add(new Telemetry { PlantId = plant.Id, Moisture = 50, Temperature = 22, Light = 300, Timestamp = DateTime.UtcNow.AddDays(-10) });
+        context.Telemetries.Add(new Telemetry { PlantId = plant.Id, Moisture = 50, Temperature = 22, Light = 300, Timestamp = DateTime.UtcNow.AddDays(-2) });
+        context.Telemetries.Add(new Telemetry { PlantId = plant.Id, Moisture = 50, Temperature = 22, Light = 300, Timestamp = DateTime.UtcNow });
+        await context.SaveChangesAsync();
+
+        // Act: Запит історії за останні 5 днів
+        var result = await telemetryController.GetHistory(plant.Id, limit: 10, days: 5);
         var okResult = Assert.IsType<OkObjectResult>(result.Result);
-        var user1Plants = Assert.IsAssignableFrom<IEnumerable<PlantResponseDto>>(okResult.Value).ToList();
+        var list = Assert.IsAssignableFrom<IEnumerable<TelemetryResponseDto>>(okResult.Value).ToList();
 
-        Assert.Single(user1Plants);
-        Assert.Equal(plantUser1.Id, user1Plants[0].Id);
-        Assert.DoesNotContain(user1Plants, p => p.Id == plantUser2.Id);
-
-        // Попытка полить чужое растение (User 2) -> должна вернуться ошибка 404 Not Found
-        var waterResult = await plantsController.WaterPlant(plantUser2.Id);
-        Assert.IsType<NotFoundObjectResult>(waterResult);
+        // Assert: Отримано лише 2 записи (за останні 5 днів), відсортовані за хронологією спадання
+        Assert.Equal(2, list.Count);
+        Assert.True(list[0].Timestamp >= list[1].Timestamp);
     }
 
-    [Fact]
-    public async Task Plants_UpdateAndDelete_WorksForOwnerAndBlockedForOthers()
-    {
-        // Проверка редактирования и удаления растений с контролем прав владения.
-        var (context, _, mockHubContext) = CreateEnvironment();
-        var plantsController = new PlantsController(context, mockHubContext.Object);
-
-        var plantUser1 = CreatePlantForUser(context, userId: 1, "Исходное название");
-
-        // 1. Входим под чужим пользователем (User 2) и пытаемся изменить/удалить растение User 1 -> 404 Not Found
-        SetUserContext(plantsController, 2, "user_two");
-        var updateDto = new PlantUpdateDto("Новое имя", "Species", 40, 80, 20, 30, 500);
-
-        var foreignUpdateResult = await plantsController.Update(plantUser1.Id, updateDto);
-        Assert.IsType<NotFoundObjectResult>(foreignUpdateResult.Result);
-
-        var foreignDeleteResult = await plantsController.Delete(plantUser1.Id);
-        Assert.IsType<NotFoundObjectResult>(foreignDeleteResult);
-
-        // 2. Входим под владельцем (User 1) и обновляем параметры -> 200 OK
-        SetUserContext(plantsController, 1, "user_one");
-        var ownUpdateResult = await plantsController.Update(plantUser1.Id, updateDto);
-        var okUpdate = Assert.IsType<OkObjectResult>(ownUpdateResult.Result);
-        var updatedPlant = Assert.IsType<PlantResponseDto>(okUpdate.Value);
-        Assert.Equal("Новое имя", updatedPlant.Name);
-
-        // 3. Удаляем собственное растение -> 204 NoContent
-        var ownDeleteResult = await plantsController.Delete(plantUser1.Id);
-        Assert.IsType<NoContentResult>(ownDeleteResult);
-
-        // Проверяем, что растение действительно удалено из базы
-        var dbPlant = await context.Plants.FindAsync(plantUser1.Id);
-        Assert.Null(dbPlant);
-    }
-
+    /// <summary>
+    /// Перевіряє ізоляцію даних телеметрії: користувач не може переглядати історію чужої рослини.
+    /// </summary>
     [Fact]
     public async Task Telemetry_History_DataIsolation_UserCannotViewForeignPlantHistory()
     {
-        // Проверка изоляции истории замеров: запрет просмотра истории чужого растения.
+        // Arrange
         var (context, _, mockHubContext) = CreateEnvironment();
         var telemetryController = new TelemetryController(context, mockHubContext.Object);
 
@@ -245,17 +285,93 @@ public class BackendTests
         });
         await context.SaveChangesAsync();
 
-        // Авторизуемся под User 1 и пытаемся запросить историю растения User 2 -> 404 Not Found
+        // Act: Користувач 1 намагається отримати історію рослини Користувача 2
         SetUserContext(telemetryController, 1, "user_one");
         var result = await telemetryController.GetHistory(plantUser2.Id);
 
+        // Assert: Перевірка повернення 404 Not Found
         Assert.IsType<NotFoundObjectResult>(result.Result);
     }
 
+    // =========================================================================
+    // ТЕСТИ ІЗОЛЯЦІЇ ДАНИХ ТА КЕРУВАННЯ РОСЛИНАМИ (PLANTS)
+    // =========================================================================
+
+    /// <summary>
+    /// Перевіряє ізоляцію списку рослин та дій над ними між різними користувачами.
+    /// </summary>
+    [Fact]
+    public async Task Plants_DataIsolation_UserCannotAccessOtherUsersPlants()
+    {
+        // Arrange
+        var (context, _, mockHubContext) = CreateEnvironment();
+        var plantsController = new PlantsController(context, mockHubContext.Object);
+
+        var plantUser1 = CreatePlantForUser(context, userId: 1, "Монстера Користувача 1");
+        var plantUser2 = CreatePlantForUser(context, userId: 2, "Фікус Користувача 2");
+
+        // Act & Assert 1: Користувач 1 бачить лише власну рослину
+        SetUserContext(plantsController, 1, "user_one");
+        var result = await plantsController.GetAll();
+        var okResult = Assert.IsType<OkObjectResult>(result.Result);
+        var user1Plants = Assert.IsAssignableFrom<IEnumerable<PlantResponseDto>>(okResult.Value).ToList();
+
+        Assert.Single(user1Plants);
+        Assert.Equal(plantUser1.Id, user1Plants[0].Id);
+        Assert.DoesNotContain(user1Plants, p => p.Id == plantUser2.Id);
+
+        // Act & Assert 2: Спроба поливу чужої рослини повертає 404 Not Found
+        var waterResult = await plantsController.WaterPlant(plantUser2.Id);
+        Assert.IsType<NotFoundObjectResult>(waterResult);
+    }
+
+    /// <summary>
+    /// Перевіряє, що оновлення та видалення рослини доступне її власнику і заблоковане для сторонніх осіб.
+    /// </summary>
+    [Fact]
+    public async Task Plants_UpdateAndDelete_WorksForOwnerAndBlockedForOthers()
+    {
+        // Arrange
+        var (context, _, mockHubContext) = CreateEnvironment();
+        var plantsController = new PlantsController(context, mockHubContext.Object);
+
+        var plantUser1 = CreatePlantForUser(context, userId: 1, "Початкова назва");
+
+        // Act & Assert 1: Користувач 2 намагається змінити та видалити рослину Користувача 1 -> 404 Not Found
+        SetUserContext(plantsController, 2, "user_two");
+        var updateDto = new PlantUpdateDto("Нове ім'я", "Species", 40, 80, 20, 30, 500);
+
+        var foreignUpdateResult = await plantsController.Update(plantUser1.Id, updateDto);
+        Assert.IsType<NotFoundObjectResult>(foreignUpdateResult.Result);
+
+        var foreignDeleteResult = await plantsController.Delete(plantUser1.Id);
+        Assert.IsType<NotFoundObjectResult>(foreignDeleteResult);
+
+        // Act & Assert 2: Власник (Користувач 1) успішно оновлює та видаляє рослину
+        SetUserContext(plantsController, 1, "user_one");
+        var ownUpdateResult = await plantsController.Update(plantUser1.Id, updateDto);
+        var okUpdate = Assert.IsType<OkObjectResult>(ownUpdateResult.Result);
+        var updatedPlant = Assert.IsType<PlantResponseDto>(okUpdate.Value);
+        Assert.Equal("Нове ім'я", updatedPlant.Name);
+
+        var ownDeleteResult = await plantsController.Delete(plantUser1.Id);
+        Assert.IsType<NoContentResult>(ownDeleteResult);
+
+        var dbPlant = await context.Plants.FindAsync(plantUser1.Id);
+        Assert.Null(dbPlant);
+    }
+
+    // =========================================================================
+    // ТЕСТИ СПОВІЩЕНЬ (ALERTS)
+    // =========================================================================
+
+    /// <summary>
+    /// Перевіряє, що користувач отримує та закриває (розв'язує) лише власні сповіщення.
+    /// </summary>
     [Fact]
     public async Task Alerts_DataIsolation_UserOnlyReceivesAndResolvesOwnAlerts()
     {
-        // Проверка изоляции алертов: получение и разрешение только личных алертов.
+        // Arrange
         var (context, _, _) = CreateEnvironment();
         var alertsController = new AlertsController(context);
 
@@ -267,9 +383,8 @@ public class BackendTests
         context.Alerts.AddRange(alert1, alert2);
         await context.SaveChangesAsync();
 
+        // Act & Assert 1: Користувач 1 бачить лише своє сповіщення
         SetUserContext(alertsController, 1, "user_one");
-
-        // 1. GET /alerts/active должен вернуть только активный алерт растения User 1
         var activeAlertsResult = await alertsController.GetActiveAlerts();
         var okResult = Assert.IsType<OkObjectResult>(activeAlertsResult.Result);
         var alerts = Assert.IsAssignableFrom<IEnumerable<AlertResponseDto>>(okResult.Value).ToList();
@@ -277,11 +392,11 @@ public class BackendTests
         Assert.Single(alerts);
         Assert.Equal(alert1.Id, alerts[0].Id);
 
-        // 2. Попытка разрешить чужой алерт (User 2) -> 404 Not Found
+        // Act & Assert 2: Спроба закрити чуже сповіщення -> 404 Not Found
         var resolveForeignResult = await alertsController.ResolveAlert(alert2.Id);
         Assert.IsType<NotFoundObjectResult>(resolveForeignResult);
 
-        // 3. Разрешение своего алерта (User 1) -> 204 NoContent
+        // Act & Assert 3: Закриття власного сповіщення -> 204 NoContent, стан IsResolved = true в БД
         var resolveOwnResult = await alertsController.ResolveAlert(alert1.Id);
         Assert.IsType<NoContentResult>(resolveOwnResult);
 
@@ -289,22 +404,29 @@ public class BackendTests
         Assert.True(updatedAlert1!.IsResolved);
     }
 
+    // =========================================================================
+    // ТЕСТИ SIGNALR ТА WEBSOCKETS
+    // =========================================================================
+
+    /// <summary>
+    /// Перевіряє надсилання асинхронного сповіщення через SignalR мок-хаб безпосередньо цільовому користувачу.
+    /// </summary>
     [Fact]
     public async Task WebSockets_BroadcastsAlertToTargetUserOnly()
     {
-        // Проверка адресной WebSocket-рассылки: сокет-событие отправляется строго в канал владельца растения (Clients.User(userId)).
+        // Arrange
         var (context, mockUserProxy, mockHubContext) = CreateEnvironment();
         var telemetryController = new TelemetryController(context, mockHubContext.Object);
 
         var plantUser1 = CreatePlantForUser(context, userId: 42);
 
-        // Имитируем критическую телеметрию с датчика (низкая влажность)
         SetDeviceKeyHeader(telemetryController, plantUser1.ApiKey);
         var badTelemetry = new TelemetryCreateDto(Moisture: 10.0f, Temperature: 22.0f, Light: 400.0f);
 
+        // Act: Передаємо критичні показники вологості
         await telemetryController.PostTelemetry(badTelemetry);
 
-        // Проверяем, что вызов SendCoreAsync для 'ReceiveAlert' отправлен ровно один раз в адресный сокет пользователя "42"
+        // Assert: Перевірка виклику методом SendCoreAsync теми ReceiveAlert у SignalR для конкретного userId
         mockUserProxy.Verify(
             c => c.SendCoreAsync("ReceiveAlert", It.IsAny<object[]>(), default),
             Times.Once);
@@ -314,39 +436,49 @@ public class BackendTests
         Assert.Equal(AlertType.LowMoisture, alert.Type);
     }
 
+    /// <summary>
+    /// Інтеграційний тест підключення до реального SignalR хабу через TestServer з передачею JWT-токена.
+    /// </summary>
     [Fact]
-    public async Task Telemetry_HistoryFiltering_WorksWithDatesAndDays()
+    public async Task WebSockets_RealSignalRHubConnection_ConnectsAndHandshakesSuccessfully()
     {
-        // Проверка фильтрации истории по временно́му отрезку (за последние N дней).
-        var (context, _, mockHubContext) = CreateEnvironment();
-        var telemetryController = new TelemetryController(context, mockHubContext.Object);
+        // Arrange
+        var testServer = _factory.Server;
+        var token = GenerateTestJwtToken(userId: 99, username: "signalr_tester");
 
-        var plant = CreatePlantForUser(context, userId: 1);
-        SetUserContext(telemetryController, 1, "user_one");
+        // Act: Налаштування з'єднання клієнта SignalR із TestServer
+        var hubConnection = new HubConnectionBuilder()
+            .WithUrl(new Uri(testServer.BaseAddress, "/hubs/telemetry"), options =>
+            {
+                options.HttpMessageHandlerFactory = _ => testServer.CreateHandler();
+                options.AccessTokenProvider = () => Task.FromResult<string?>(token);
+            })
+            .Build();
 
-        // Добавляем 3 записи с разным временем
-        context.Telemetries.Add(new Telemetry { PlantId = plant.Id, Moisture = 50, Temperature = 22, Light = 300, Timestamp = DateTime.UtcNow.AddDays(-10) });
-        context.Telemetries.Add(new Telemetry { PlantId = plant.Id, Moisture = 50, Temperature = 22, Light = 300, Timestamp = DateTime.UtcNow.AddDays(-2) });
-        context.Telemetries.Add(new Telemetry { PlantId = plant.Id, Moisture = 50, Temperature = 22, Light = 300, Timestamp = DateTime.UtcNow });
-        await context.SaveChangesAsync();
+        hubConnection.On<object>("ReceiveAlert", _ => { });
 
-        // Запрашиваем историю за последние 5 дней -> ожидаем ровно 2 новые записи (отсекается 10-дневная)
-        var result = await telemetryController.GetHistory(plant.Id, limit: 10, days: 5);
-        var okResult = Assert.IsType<OkObjectResult>(result.Result);
-        var list = Assert.IsAssignableFrom<IEnumerable<TelemetryResponseDto>>(okResult.Value).ToList();
+        // Assert: Успішне встановлення з'єднання (Handshake)
+        await hubConnection.StartAsync();
+        Assert.Equal(HubConnectionState.Connected, hubConnection.State);
 
-        Assert.Equal(2, list.Count);
-        Assert.True(list[0].Timestamp >= list[1].Timestamp); // Проверка сортировки от новых к старым
+        await hubConnection.StopAsync();
     }
 
+    // =========================================================================
+    // ТЕСТИ КЕРУВАННЯ КОРИСТУВАЧАМИ (USERS) ТА JWT
+    // =========================================================================
+
+    /// <summary>
+    /// Перевіряє реєстрацію нового користувача, його вхід та відхилення входу при некоректному паролі.
+    /// </summary>
     [Fact]
     public async Task Users_RegistrationAndLogin_IssuesValidToken()
     {
-        // Проверка полного цикла аутентификации: регистрация, успешный вход и валидация пароля.
+        // Arrange
         var (context, _, _) = CreateEnvironment();
         var usersController = new UsersController(context, _configuration);
 
-        // 1. Регистрация нового пользователя -> 201 Created и выдача токена
+        // Act & Assert 1: Реєстрація користувача -> 201 Created і повернення JWT
         var regResult = await usersController.Register(new UserRegisterDto("gardener_1", "secure_pass_123"));
         var createdResult = Assert.IsType<CreatedAtActionResult>(regResult.Result);
         var registeredUser = Assert.IsType<UserResponseDto>(createdResult.Value);
@@ -354,7 +486,7 @@ public class BackendTests
         Assert.Equal("gardener_1", registeredUser.Username);
         Assert.False(string.IsNullOrWhiteSpace(registeredUser.Token));
 
-        // 2. Логин с верным паролем -> 200 OK
+        // Act & Assert 2: Вхід із правильним паролем -> 200 OK та валідний JWT
         var loginResult = await usersController.Login(new UserLoginDto("gardener_1", "secure_pass_123"));
         var loginOk = Assert.IsType<OkObjectResult>(loginResult.Result);
         var loggedUser = Assert.IsType<UserResponseDto>(loginOk.Value);
@@ -362,15 +494,18 @@ public class BackendTests
         Assert.Equal(registeredUser.Id, loggedUser.Id);
         Assert.False(string.IsNullOrWhiteSpace(loggedUser.Token));
 
-        // 3. Попытка входа с ошибочным паролем -> 401 Unauthorized
+        // Act & Assert 3: Вхід із неправильним паролем -> 401 Unauthorized
         var badLoginResult = await usersController.Login(new UserLoginDto("gardener_1", "wrong_password"));
         Assert.IsType<UnauthorizedObjectResult>(badLoginResult.Result);
     }
 
+    /// <summary>
+    /// Перевіряє захист кінцевої точки /me та отримання даних профілю поточного користувача.
+    /// </summary>
     [Fact]
     public async Task Users_Authorization_ProtectsGetMeEndpoint()
     {
-        // Проверка защиты эндпоинта /users/me атрибутом [Authorize].
+        // Arrange
         var (context, _, _) = CreateEnvironment();
         var usersController = new UsersController(context, _configuration);
 
@@ -378,12 +513,12 @@ public class BackendTests
         var createdResult = Assert.IsType<CreatedAtActionResult>(regResult.Result);
         var user = Assert.IsType<UserResponseDto>(createdResult.Value);
 
-        // 1. Вызов без заголовков авторизации -> 401 Unauthorized
+        // Act & Assert 1: Запит профілю без автентифікації -> 401 Unauthorized
         usersController.ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() };
         var unauthorizedResult = await usersController.GetMe();
         Assert.IsType<UnauthorizedObjectResult>(unauthorizedResult.Result);
 
-        // 2. Вызов с установленным контекстом пользователя -> 200 OK
+        // Act & Assert 2: Запит профілю авторизованим користувачем -> 200 OK з відповідними даними
         SetUserContext(usersController, user.Id, user.Username);
         var authorizedResult = await usersController.GetMe();
         var okResult = Assert.IsType<OkObjectResult>(authorizedResult.Result);
@@ -393,10 +528,13 @@ public class BackendTests
         Assert.Equal("auth_user", profile.Username);
     }
 
+    /// <summary>
+    /// Перевіряє зміну пароля: відхилення при неправильному старому паролі та успішну авторизацію з новим.
+    /// </summary>
     [Fact]
     public async Task Users_ChangePassword_WorksCorrectlyAndRejectsWrongOldPassword()
     {
-        // Проверка функции смены пароля пользователя.
+        // Arrange
         var (context, _, _) = CreateEnvironment();
         var usersController = new UsersController(context, _configuration);
 
@@ -406,55 +544,160 @@ public class BackendTests
 
         SetUserContext(usersController, user.Id, user.Username);
 
-        // 1. Передача неверного старого пароля -> 400 Bad Request
+        // Act & Assert 1: Введення невірного старого пароля -> 400 Bad Request
         var wrongOldPassResult = await usersController.ChangePassword(new UserChangePasswordDto("incorrect_old_pass", "new_secret_456"));
         Assert.IsType<BadRequestObjectResult>(wrongOldPassResult);
 
-        // 2. Успешная смена пароля с верным старым паролем -> 200 OK
+        // Act & Assert 2: Успішна зміна пароля
         var successChangeResult = await usersController.ChangePassword(new UserChangePasswordDto("old_secret_123", "new_secret_456"));
         Assert.IsType<OkObjectResult>(successChangeResult);
 
-        // 3. Вход со старым паролем должен отклоняться -> 401 Unauthorized
+        // Act & Assert 3: Спроба входу зі старим паролем відхиляється, а з новим — проходить
         var oldLoginResult = await usersController.Login(new UserLoginDto("pass_user", "old_secret_123"));
         Assert.IsType<UnauthorizedObjectResult>(oldLoginResult.Result);
 
-        // 4. Вход с новым паролем должен проходить успешно -> 200 OK
         var newLoginResult = await usersController.Login(new UserLoginDto("pass_user", "new_secret_456"));
         Assert.IsType<OkObjectResult>(newLoginResult.Result);
     }
 
+    /// <summary>
+    /// Перевіряє видалення власного облікового запису (DeleteMe): каскадне видалення зв'язаних рослин
+    /// та подальше відхилення запитів із цим токеном.
+    /// </summary>
     [Fact]
     public async Task Users_DeleteMe_RemovesUserAndPlants_AndTokenBecomesInvalid()
     {
-        // Проверка удаления профиля пользователем и аннулирования его токена/сессии при поиске в БД.
+        // Arrange
         var (context, _, mockHubContext) = CreateEnvironment();
         var usersController = new UsersController(context, _configuration);
         var plantsController = new PlantsController(context, mockHubContext.Object);
 
-        // 1. Регистрируем пользователя и создаем для него растение
         var regResult = await usersController.Register(new UserRegisterDto("deleted_user", "password123"));
         var createdResult = Assert.IsType<CreatedAtActionResult>(regResult.Result);
         var user = Assert.IsType<UserResponseDto>(createdResult.Value);
 
         SetUserContext(plantsController, user.Id, user.Username);
-        var plantResult = await plantsController.Create(new PlantCreateDto("Растение удаляемого юзера", "Species"));
+        var plantResult = await plantsController.Create(new PlantCreateDto("Рослина видалюваного юзера", "Species"));
         var createdPlant = Assert.IsType<CreatedAtActionResult>(plantResult.Result);
         var plant = Assert.IsType<PlantResponseDto>(createdPlant.Value);
 
-        // 2. Авторизуемся под созданным пользователем и вызываем DELETE /users/me
+        // Act: Видалення власного акаунту
         SetUserContext(usersController, user.Id, user.Username);
         var deleteResult = await usersController.DeleteMe();
         Assert.IsType<NoContentResult>(deleteResult);
 
-        // 3. Проверяем, что пользователь и его растения каскадно удалились из базы данных
+        // Assert: Перевірка відсутності записів у БД
         var dbUser = await context.Users.FindAsync(user.Id);
         var dbPlant = await context.Plants.FindAsync(plant.Id);
         Assert.Null(dbUser);
         Assert.Null(dbPlant);
 
-        // 4. Проверка инвалидации токена: при попытке вызвать /users/me с ранее выданными клеймами/токеном
-        // контроллер проверяет наличие пользователя в БД и возвращает 404 Not Found (пользователь удален)
+        // Запит профілю видаленого користувача повертає 404 Not Found
         var invalidTokenResult = await usersController.GetMe();
         Assert.IsType<NotFoundObjectResult>(invalidTokenResult.Result);
+    }
+
+    /// <summary>
+    /// Перевіряє обробку повторної реєстрації користувача з вже існуючим Username.
+    /// </summary>
+    [Fact]
+    public async Task Users_Registration_DuplicateUsername_ReturnsBadRequestOrConflict()
+    {
+        // Arrange
+        var (context, _, _) = CreateEnvironment();
+        var usersController = new UsersController(context, _configuration);
+
+        await usersController.Register(new UserRegisterDto("duplicate_user", "password123"));
+
+        // Act: Повторна спроба реєстрації з аналогічним ім'ям
+        var secondAttempt = await usersController.Register(new UserRegisterDto("duplicate_user", "another_password"));
+
+        // Assert: Відповідь 400 Bad Request або 409 Conflict
+        Assert.True(
+            secondAttempt.Result is BadRequestObjectResult || secondAttempt.Result is ConflictObjectResult,
+            "Повторна реєстрація з існуючим Username повинна повертати 400 або 409."
+        );
+    }
+
+    /// <summary>
+    /// Перевіряє дотримання унікальності імені користувача на рівні бази даних при паралельному збереженні.
+    /// </summary>
+    [Fact]
+    public async Task Users_Registration_ParallelRequests_EnforcesUniqueness()
+    {
+        // Arrange
+        var (context, _, _) = CreateEnvironment();
+
+        var user1 = new User { Username = "race_condition_user", PasswordHash = "hash1" };
+        var user2 = new User { Username = "race_condition_user", PasswordHash = "hash2" };
+
+        context.Users.Add(user1);
+        await context.SaveChangesAsync();
+
+        // Act & Assert: При додаванні дубліката очікується виключення EF Core
+        context.Users.Add(user2);
+
+        await Assert.ThrowsAsync<DbUpdateException>(async () =>
+        {
+            await context.SaveChangesAsync();
+        });
+    }
+
+    // =========================================================================
+    // ІНТЕГРАЦІЙНІ ТЕСТЫ JWT MIDDLEWARE (HTTP CLIENT)
+    // =========================================================================
+
+    /// <summary>
+    /// Інтеграційний тест Middleware JWT авторизації: валідний Bearer-токен повертає статус 200 OK.
+    /// </summary>
+    [Fact]
+    public async Task Users_JwtMiddleware_ValidToken_Returns200OK()
+    {
+        // Arrange: Створення клієнта та додавання користувача в БД інстанса WebApplicationFactory
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+        var existingUser = await db.Users.FirstOrDefaultAsync(u => u.Id == 1);
+        if (existingUser == null)
+        {
+            db.Users.Add(new User { Id = 1, Username = "valid_jwt_user", PasswordHash = "hash" });
+            await db.SaveChangesAsync();
+        }
+
+        var client = _factory.CreateClient();
+        var token = GenerateTestJwtToken(userId: 1, username: "valid_jwt_user");
+
+        var request = new HttpRequestMessage(HttpMethod.Get, "/api/v1/users/me");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+
+        // Act
+        var response = await client.SendAsync(request);
+
+        // Assert
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    /// <summary>
+    /// Інтеграційний тест Middleware JWT авторизації: прострочений або підроблений токен повертає status 401 Unauthorized.
+    /// </summary>
+    [Fact]
+    public async Task Users_JwtMiddleware_ExpiredOrTamperedToken_Returns401Unauthorized()
+    {
+        // Arrange
+        var client = _factory.CreateClient();
+
+        // Act & Assert 1: Прострочений токен (Expired Token) -> 401 Unauthorized
+        var expiredToken = GenerateTestJwtToken(userId: 1, username: "expired_user", isExpired: true);
+        var requestExpired = new HttpRequestMessage(HttpMethod.Get, "/api/v1/users/me");
+        requestExpired.Headers.Authorization = new AuthenticationHeaderValue("Bearer", expiredToken);
+        var responseExpired = await client.SendAsync(requestExpired);
+        Assert.Equal(HttpStatusCode.Unauthorized, responseExpired.StatusCode);
+
+        // Act & Assert 2: Підроблений токен (Tampered Signature Key) -> 401 Unauthorized
+        var tamperedToken = GenerateTestJwtToken(userId: 1, username: "hacker_user", isTamperedKey: true);
+        var requestTampered = new HttpRequestMessage(HttpMethod.Get, "/api/v1/users/me");
+        requestTampered.Headers.Authorization = new AuthenticationHeaderValue("Bearer", tamperedToken);
+        var responseTampered = await client.SendAsync(requestTampered);
+        Assert.Equal(HttpStatusCode.Unauthorized, responseTampered.StatusCode);
     }
 }

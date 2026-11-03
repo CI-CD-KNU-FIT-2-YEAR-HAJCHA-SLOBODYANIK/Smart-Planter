@@ -1,8 +1,15 @@
-import React, { useState, useEffect } from "react";
-import { fetchPlants, createPlant } from "./api/plantsApi";
-import { waterPlant } from "./api/plantsApi";
+import React, { useState, useEffect, useRef, useCallback } from "react";
+import {
+  fetchPlants,
+  createPlant,
+  updatePlant,
+  deletePlant,
+  waterPlant,
+} from "./api/plantsApi";
 import { fetchActiveAlerts, resolveAlert } from "./api/alertsApi";
 import { fetchTelemetryHistory } from "./api/telemetryApi";
+import { getStoredUser } from "./api/client";
+import { startSignalR, stopSignalR } from "./services/signalrService";
 
 import { Header } from "./components/layout/Header";
 import { PlantCard } from "./components/plants/PlantCard";
@@ -11,6 +18,10 @@ import { HistoryTable } from "./components/telemetry/HistoryTable";
 import { TelemetryChart } from "./components/telemetry/TelemetryChart";
 import { AlertsList } from "./components/alerts/AlertsList";
 import { AddPlantModal } from "./components/plants/AddPlantModal";
+import { EditPlantModal } from "./components/plants/EditPlantModal";
+import { TelegramBotModal } from "./components/telegram/TelegramBotModal";
+import { AuthModal } from "./components/auth/AuthModal";
+import { IoTSimulatorModal } from "./components/simulator/IoTSimulatorModal";
 import { OfflineBanner } from "./components/layout/OfflineBanner";
 
 export default function App() {
@@ -22,9 +33,22 @@ export default function App() {
     return cached ? JSON.parse(cached) : [];
   });
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [editingPlant, setEditingPlant] = useState(null);
+  const [isTelegramModalOpen, setIsTelegramModalOpen] = useState(false);
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+  const [isSimulatorModalOpen, setIsSimulatorModalOpen] = useState(false);
+  const [isCopied, setIsCopied] = useState(false);
+  const [isWateringPending, setIsWateringPending] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [connectionStatus, setConnectionStatus] = useState("disconnected");
+  const [currentUser, setCurrentUser] = useState(getStoredUser());
 
-  const loadBaseData = async () => {
+  const selectedPlantIdRef = useRef(selectedPlantId);
+  useEffect(() => {
+    selectedPlantIdRef.current = selectedPlantId;
+  }, [selectedPlantId]);
+
+  const loadBaseData = useCallback(async () => {
     try {
       const [plantsData, alertsData] = await Promise.all([
         fetchPlants(),
@@ -34,7 +58,7 @@ export default function App() {
       localStorage.setItem("cached_plants", JSON.stringify(plantsData));
       setAlerts(alertsData);
 
-      if (plantsData.length > 0 && !selectedPlantId) {
+      if (plantsData.length > 0 && !selectedPlantIdRef.current) {
         setSelectedPlantId(plantsData[0].id);
       }
     } catch (err) {
@@ -42,30 +66,92 @@ export default function App() {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
-  const loadTelemetry = async (plantId) => {
-    if (!plantId) return;
-    try {
-      const data = await fetchTelemetryHistory(plantId, 10);
-      setHistory(data);
-      localStorage.setItem("cached_history", JSON.stringify(data));
-    } catch (err) {
-      console.error("Помилка завантаження телеметрії:", err);
+  const [timeframe, setTimeframe] = useState("30");
+  const [timeframeParams, setTimeframeParams] = useState({ limit: 30 });
+
+  const loadTelemetry = useCallback(
+    async (plantId, params = null) => {
+      if (!plantId) return;
+      try {
+        const activeParams = params || timeframeParams;
+        const data = await fetchTelemetryHistory(plantId, activeParams);
+        setHistory(data);
+        localStorage.setItem("cached_history", JSON.stringify(data));
+      } catch (err) {
+        console.error("Помилка завантаження телеметрії:", err);
+      }
+    },
+    [timeframeParams],
+  );
+
+  const handleTimeframeChange = (tfId, params) => {
+    setTimeframe(tfId);
+    setTimeframeParams(params);
+    if (selectedPlantId) {
+      loadTelemetry(selectedPlantId, params);
     }
   };
 
+  // Initialize Real-time SignalR WebSocket Stream
+  const initRealtime = useCallback(() => {
+    startSignalR({
+      onTelemetry: (telemetry) => {
+        if (telemetry.plantId === selectedPlantIdRef.current) {
+          setHistory((prev) => {
+            const updated = [
+              telemetry,
+              ...prev.filter((p) => p.id !== telemetry.id),
+            ].slice(0, 50);
+            localStorage.setItem("cached_history", JSON.stringify(updated));
+            return updated;
+          });
+        }
+      },
+      onAlert: (newAlert) => {
+        setAlerts((prev) => [
+          newAlert,
+          ...prev.filter((a) => a.id !== newAlert.id),
+        ]);
+      },
+      onWatering: (wateringEvent) => {
+        if (wateringEvent.plantId === selectedPlantIdRef.current) {
+          loadTelemetry(selectedPlantIdRef.current);
+        }
+        fetchActiveAlerts()
+          .then(setAlerts)
+          .catch(() => {});
+      },
+      onStatusChange: (status) => {
+        setConnectionStatus(status);
+      },
+    });
+  }, [loadTelemetry]);
+
   useEffect(() => {
     loadBaseData();
-    const interval = setInterval(loadBaseData, 5000);
-    return () => clearInterval(interval);
-  }, []);
+    initRealtime();
+
+    // Fallback polling for robust multi-client sync
+    const interval = setInterval(() => {
+      loadBaseData();
+      if (selectedPlantIdRef.current) {
+        loadTelemetry(selectedPlantIdRef.current);
+      }
+    }, 5000);
+
+    return () => {
+      clearInterval(interval);
+      stopSignalR();
+    };
+  }, [loadBaseData, loadTelemetry, initRealtime]);
 
   useEffect(() => {
     if (selectedPlantId) {
       loadTelemetry(selectedPlantId);
     }
-  }, [selectedPlantId]);
+  }, [selectedPlantId, loadTelemetry]);
 
   const handleResolve = async (id) => {
     try {
@@ -78,12 +164,59 @@ export default function App() {
 
   const handleCreate = async (payload) => {
     try {
-      await createPlant(payload);
+      const created = await createPlant(payload);
       setIsModalOpen(false);
       await loadBaseData();
+      if (created?.id) {
+        setSelectedPlantId(created.id);
+      }
     } catch (err) {
       alert(`Помилка створення рослини: ${err.message}`);
     }
+  };
+
+  const handleUpdatePlant = async (plantId, payload) => {
+    try {
+      await updatePlant(plantId, payload);
+      setEditingPlant(null);
+      await loadBaseData();
+    } catch (err) {
+      alert(`Помилка оновлення рослини: ${err.message}`);
+    }
+  };
+
+  const handleDeletePlant = async (plant) => {
+    if (
+      !window.confirm(
+        `Ви дійсно бажаєте видалити вазон «${plant.name}»? Уся історія телеметрії та сповіщень буде видалена.`,
+      )
+    ) {
+      return;
+    }
+    try {
+      await deletePlant(plant.id);
+      setPlants((prev) => prev.filter((p) => p.id !== plant.id));
+      if (selectedPlantId === plant.id) {
+        const remaining = plants.filter((p) => p.id !== plant.id);
+        setSelectedPlantId(remaining.length > 0 ? remaining[0].id : null);
+      }
+    } catch (err) {
+      alert(`Помилка видалення рослини: ${err.message}`);
+    }
+  };
+
+  const handleUserAuthenticated = (user) => {
+    setCurrentUser(user);
+    loadBaseData();
+    initRealtime();
+  };
+
+  const handleUserLoggedOut = () => {
+    setCurrentUser(null);
+    setPlants([]);
+    setAlerts([]);
+    setHistory([]);
+    setSelectedPlantId(null);
   };
 
   const selectedPlant = plants.find((p) => p.id === selectedPlantId);
@@ -91,30 +224,57 @@ export default function App() {
 
   const handleWater = async (plantId) => {
     try {
-      setHistory((prev) => {
-        if (!prev.length) return prev;
-        return [{ ...prev[0], moisture: 85.0 }, ...prev.slice(1)];
-      });
+      setIsWateringPending(true);
       await waterPlant(plantId);
-      alert("💧 Полив успішно зафіксовано на сервері!");
+
+      // Одразу підтягуємо актуальну телеметрію після фіксації на бекенді
+      await loadTelemetry(plantId);
+
+      const updatedAlerts = await fetchActiveAlerts();
+      setAlerts(updatedAlerts);
+
+      setTimeout(() => setIsWateringPending(false), 3000);
     } catch (err) {
-      console.warn(
-        "Сервер поливу відповів із затримкою, запит надіслано:",
-        err,
-      );
+      setIsWateringPending(false);
+      console.warn("Помилка поливу:", err);
+      alert(`Помилка поливу: ${err.message}`);
+    }
+  };
+
+  const handleWaterAndResolve = async (plantId, alertId) => {
+    try {
+      await handleWater(plantId);
+      await handleResolve(alertId);
+    } catch (err) {
+      alert(`Помилка: ${err.message}`);
     }
   };
 
   return (
-    <div style={{ maxWidth: 900, margin: "0 auto", padding: 16 }}>
+    <div style={{ maxWidth: 960, margin: "0 auto", padding: 16 }}>
       <OfflineBanner />
 
       <Header
-        onRefresh={loadBaseData}
+        onRefresh={() => {
+          loadBaseData();
+          if (selectedPlantId) loadTelemetry(selectedPlantId);
+        }}
         onOpenCreateModal={() => setIsModalOpen(true)}
+        connectionStatus={connectionStatus}
+        onReconnect={initRealtime}
+        isPollingActive={true}
+        currentUser={currentUser}
+        onOpenTelegramModal={() => setIsTelegramModalOpen(true)}
+        onOpenAuthModal={() => setIsAuthModalOpen(true)}
+        onOpenSimulatorModal={() => setIsSimulatorModalOpen(true)}
       />
 
-      <AlertsList alerts={alerts} onResolve={handleResolve} />
+      <AlertsList
+        alerts={alerts}
+        onResolve={handleResolve}
+        onWaterAndResolve={handleWaterAndResolve}
+        selectedPlantId={selectedPlantId}
+      />
 
       <h2 style={{ fontSize: 18, color: "#374151", marginBottom: 12 }}>
         Ваші рослини
@@ -129,7 +289,7 @@ export default function App() {
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))",
+          gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))",
           gap: 12,
           marginBottom: 24,
         }}
@@ -140,6 +300,8 @@ export default function App() {
             plant={plant}
             isSelected={selectedPlantId === plant.id}
             onSelect={setSelectedPlantId}
+            onEdit={setEditingPlant}
+            onDelete={handleDeletePlant}
           />
         ))}
       </div>
@@ -150,41 +312,198 @@ export default function App() {
             background: "#fff",
             border: "1px solid #e5e7eb",
             borderRadius: 12,
-            padding: 16,
+            padding: 18,
             boxShadow: "0 1px 3px rgba(0,0,0,0.05)",
           }}
         >
-          <h3 style={{ margin: "0 0 16px 0", color: "#1f2937" }}>
-            Поточний стан: <b>{selectedPlant.name}</b>
-          </h3>
-          <button
-            onClick={() => handleWater(selectedPlantId)}
+          <div
             style={{
-              padding: "8px 14px",
-              backgroundColor: "#0284c7",
-              color: "#fff",
-              border: "none",
-              borderRadius: 8,
-              cursor: "pointer",
-              fontWeight: 600,
-              display: "inline-flex",
+              display: "flex",
+              justifyContent: "space-between",
               alignItems: "center",
-              gap: 6,
-              marginBottom: 16,
+              flexWrap: "wrap",
+              gap: 10,
+              marginBottom: 12,
             }}
           >
-            💧 Полити рослину
-          </button>
+            <div>
+              <h3 style={{ margin: 0, color: "#1f2937", fontSize: 18 }}>
+                Поточний стан: <b>{selectedPlant.name}</b>
+                {selectedPlant.species && (
+                  <span
+                    style={{
+                      fontSize: 14,
+                      color: "#6b7280",
+                      fontWeight: 400,
+                      marginLeft: 8,
+                    }}
+                  >
+                    ({selectedPlant.species})
+                  </span>
+                )}
+              </h3>
+            </div>
+
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <button
+                onClick={() => setEditingPlant(selectedPlant)}
+                style={{
+                  padding: "8px 14px",
+                  backgroundColor: "#f3f4f6",
+                  color: "#374151",
+                  border: "1px solid #d1d5db",
+                  borderRadius: 8,
+                  cursor: "pointer",
+                  fontWeight: 600,
+                  fontSize: 13,
+                }}
+              >
+                ✏️ Налаштувати
+              </button>
+
+              <button
+                onClick={() => handleWater(selectedPlantId)}
+                disabled={isWateringPending}
+                style={{
+                  padding: "8px 16px",
+                  backgroundColor: isWateringPending ? "#0369a1" : "#0284c7",
+                  color: "#fff",
+                  border: "none",
+                  borderRadius: 8,
+                  cursor: isWateringPending ? "default" : "pointer",
+                  fontWeight: 600,
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 6,
+                  boxShadow: "0 1px 2px rgba(2, 132, 199, 0.3)",
+                  fontSize: 13,
+                  transition: "all 0.2s ease",
+                }}
+              >
+                {isWateringPending
+                  ? "💧 Полив зафіксовано..."
+                  : "💧 Зафіксувати полив"}
+              </button>
+            </div>
+          </div>
+
+          {/* IoT Device Key snippet banner */}
+          {selectedPlant.apiKey && (
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                flexWrap: "wrap",
+                gap: 8,
+                padding: "8px 12px",
+                marginBottom: 16,
+                backgroundColor: "#f0fdf4",
+                border: "1px solid #bbf7d0",
+                borderRadius: 8,
+                fontSize: 12,
+                color: "#166534",
+              }}
+            >
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 6,
+                  flexWrap: "wrap",
+                }}
+              >
+                <span>
+                  🔑 <b>X-Device-Key IoT сенсора:</b>
+                </span>
+                <code
+                  style={{
+                    backgroundColor: "#ffffff",
+                    padding: "2px 8px",
+                    borderRadius: 4,
+                    border: "1px solid #86efac",
+                    fontFamily: "monospace",
+                    fontSize: 12,
+                  }}
+                >
+                  {selectedPlant.apiKey}
+                </code>
+              </div>
+
+              <button
+                onClick={() => {
+                  navigator.clipboard.writeText(selectedPlant.apiKey);
+                  setIsCopied(true);
+                  setTimeout(() => setIsCopied(false), 2500);
+                }}
+                style={{
+                  background: isCopied ? "#15803d" : "#166534",
+                  color: "#fff",
+                  border: "none",
+                  borderRadius: 6,
+                  padding: "4px 10px",
+                  fontSize: 11,
+                  fontWeight: 600,
+                  cursor: "pointer",
+                  transition: "all 0.2s ease",
+                }}
+              >
+                {isCopied ? "✓ Скопійовано!" : "Скопіювати ключ"}
+              </button>
+            </div>
+          )}
+
           <MetricsGrid latestTelemetry={latestMetric} plant={selectedPlant} />
-          <TelemetryChart history={history} />
-          <HistoryTable history={history} />
+          <TelemetryChart
+            history={history}
+            onTimeframeChange={handleTimeframeChange}
+            currentTimeframe={timeframe}
+          />
+          <HistoryTable history={history} plant={selectedPlant} />
         </section>
       )}
 
-      <AddPlantModal
-        isOpen={isModalOpen}
-        onClose={() => setIsModalOpen(false)}
-        onCreate={handleCreate}
+      {currentUser && (
+        <AddPlantModal
+          isOpen={isModalOpen}
+          onClose={() => setIsModalOpen(false)}
+          onCreate={handleCreate}
+        />
+      )}
+
+      <EditPlantModal
+        isOpen={!!editingPlant}
+        plant={editingPlant}
+        onClose={() => setEditingPlant(null)}
+        onUpdate={handleUpdatePlant}
+      />
+
+      <TelegramBotModal
+        isOpen={isTelegramModalOpen}
+        onClose={() => setIsTelegramModalOpen(false)}
+        currentUser={currentUser}
+        onUserAuthenticated={handleUserAuthenticated}
+      />
+
+      <AuthModal
+        isOpen={isAuthModalOpen}
+        onClose={() => setIsAuthModalOpen(false)}
+        currentUser={currentUser}
+        onUserAuthenticated={handleUserAuthenticated}
+        onUserLoggedOut={handleUserLoggedOut}
+      />
+
+      <IoTSimulatorModal
+        isOpen={isSimulatorModalOpen}
+        onClose={() => setIsSimulatorModalOpen(false)}
+        plants={plants}
+        selectedPlantId={selectedPlantId}
+        onTelemetrySent={() => {
+          loadBaseData();
+          if (selectedPlantId) {
+            loadTelemetry(selectedPlantId);
+          }
+        }}
       />
     </div>
   );

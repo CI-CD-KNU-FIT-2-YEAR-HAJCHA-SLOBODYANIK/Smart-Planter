@@ -10,7 +10,34 @@
 
 ---
 
-## Швидкий запуск
+## Швидкий запуск (навіть для тих, хто вперше бачить проєкт)
+
+1. **Клонування репозиторію:**
+
+   git clone https://github.com/CI-CD-KNU-FIT-2-YEAR-HAJCHA-SLOBODYANIK/Smart-Planter.git smart-planter
+   cd smart-planter
+
+2. **Запуск сервісів у Docker (Backend + PostgreSQL + Telegram Bot):**
+
+   docker compose up -d --build
+
+3. **Запуск Frontend (React) — виконується у новому терміналі:**
+
+   cd frontend
+   npm install
+   npm run dev
+
+4. **Зупинити проєкт:**
+   - **Зупинити Docker-контейнери** (виконується у кореневій папці smart-planter):
+     docker compose down
+   - **Зупинити та очистити базу даних** (повне скидання стану):
+     docker compose down -v
+
+5. **Прогорнути вниз в цьому файлі до секції ##Frontend, де починаючи з 4 пункту знаходяться інструкції по функціоналу на сайті**
+
+---
+
+## Швидкий запуск backend
 
 1. **Клонування репозиторію та перехід у папку проєкту:**
 

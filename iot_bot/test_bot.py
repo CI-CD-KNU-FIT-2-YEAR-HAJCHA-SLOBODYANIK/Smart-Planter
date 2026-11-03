@@ -32,7 +32,7 @@ def test_get_auth_data():
     assert len(auth_data) == 2
 
 
-@patch("main_5.requests.post")
+@patch("main.requests.post")
 def test_init_backend_for_user_success(mock_post):
     """Тест: Успішна авторизація / реєстрація користувача на бекенді."""
     # Імітуємо успішну відповідь від бекенда при логіні (Status 200)

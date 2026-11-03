@@ -12,7 +12,6 @@ from aiogram.exceptions import TelegramBadRequest
 BACKEND_API_URL = os.getenv("BACKEND_API_URL", "http://backend:8080/api/v1").rstrip('/')
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 
-# --- Константи інтервалів та налаштувань ---
 DEFAULT_PASSWORD = "bot_secure_password_123"
 STATUS_REFRESH_INTERVAL = 12
 ALERTS_CHECK_INTERVAL = 15

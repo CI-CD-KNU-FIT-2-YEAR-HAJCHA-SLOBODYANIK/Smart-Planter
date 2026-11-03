@@ -22,7 +22,7 @@ jobs:
       - name: Install dependencies
         run: |
           cd frontend
-          npm ci
+          npm install
 
       - name: Run Linter
         run: |
@@ -32,4 +32,4 @@ jobs:
       - name: Run Tests with Coverage
         run: |
           cd frontend
-          npm test -- --coverage --watch=false --passWithNoTests
+          npm run coverage -- --watch=false --passWithNoTests
